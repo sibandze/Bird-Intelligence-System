@@ -12,6 +12,7 @@ class AudioTransformerInput(nn.Module):
         n_mels = 128,
         patch_size = 25,
         embed_dim = 256,
+        max_len = 1000,
         dropout = 0.1
     ):
         super().__init__()
@@ -28,7 +29,7 @@ class AudioTransformerInput(nn.Module):
 
         nn.init.normal_(self.cls_token, std=0.02)
 
-        self.pos_enc = PositionalEncoding(embed_dim)
+        self.pos_enc = PositionalEncoding(embed_dim, max_len)
 
         self.dropout = nn.Dropout(dropout)
 

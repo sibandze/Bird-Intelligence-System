@@ -14,6 +14,7 @@ class Encoder(nn.Module):
         device,
         forward_expansion,
         dropout,
+        max_len = 1000,
     ):
         super(Encoder, self).__init__()
         self.embed_size = embed_size
@@ -23,7 +24,9 @@ class Encoder(nn.Module):
         self.input_layer = AudioTransformerInput(
             n_mels=n_mels,
             patch_size=patch_size,
-            embed_dim=embed_size
+            embed_dim=embed_size,
+            max_len = max_len,
+            dropout = dropout,
         )
 
         # Stack of Transformer Blocks

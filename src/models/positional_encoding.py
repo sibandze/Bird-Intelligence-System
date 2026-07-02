@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, embed_dim, max_len): # max_len = 1000
+    def __init__(self, embed_dim, max_len = 1000): # max_len = 1000
         super().__init__()
 
         # 1. Define a learnable parameter of shape (1, max_len, embed_dim)
