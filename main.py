@@ -2,15 +2,13 @@ import argparse
 import yaml
 from pathlib import Path
 
-# from src.data.run_pipeline import run_data_pipeline
+from src.data.run_pipeline import run_data_pipeline
 # from src.training.train import train_model       # Uncomment when built
 # from src.evaluation.evaluate import evaluate_model # Uncomment when built
 
  # Determine the absolute path of the project root (where main.py is located) and define the absolute path to the config file
 ROOT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE_PATH = "configs/config.yaml"
-
-print(ROOT_DIR, CONFIG_FILE_PATH)
 
 def load_and_resolve_config(config_path):
     """Loads the YAML config and resolves all relative paths to absolute paths."""
@@ -30,7 +28,6 @@ def load_and_resolve_config(config_path):
         data_cfg['raw_audio_dir'] = str(ROOT_DIR / data_cfg['raw_audio_dir'])
         data_cfg['processed_npy_dir'] = str(ROOT_DIR / data_cfg['processed_npy_dir'])
         data_cfg['metadata_csv'] = str(ROOT_DIR / data_cfg['metadata_csv'])
-    print(config)
     return config
 
 def main():
@@ -49,7 +46,7 @@ def main():
     # 1. Data Pipeline
     if args.pipeline or args.all:
         print(">>> Starting Data Pipeline...")
-        # run_data_pipeline(config)
+        run_data_pipeline(config)
 
     # 2. Training Loop
     if args.train or args.all:
