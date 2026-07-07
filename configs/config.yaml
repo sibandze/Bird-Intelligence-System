@@ -5,7 +5,7 @@ data:
   processed_npy_dir: "data/processed_spectrograms"
   metadata_csv: "data/metadata_csv.csv"
   data_csv: "data/birds_voices.csv"
-  num_classes: 5
+  num_classes: 10
   num_samples_per_class: 50
 
 audio:
