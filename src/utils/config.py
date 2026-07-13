@@ -12,8 +12,9 @@ def resolve_metadata_csv_path(config):
     metadata_dir_path = Path(metadata_dir)
     
     if not metadata_dir_path.exists() or not metadata_dir_path.is_dir():
-        # TODO: If folder doesn't exist, create it, then raise file not found error as the file with spec audio cfg doesn't exist
-        raise FileNotFoundError(f"Metadata directory does not exist: {metadata_dir_path}")
+        # Create the directory if it doesn't exist
+        metadata_dir_path.mkdir(parents=True, exist_ok=True)
+        raise FileNotFoundError(f"Metadata directory did not exist (created at {metadata_dir_path}). Please add the metadata CSV file with the audio configuration specification.")
     
     csv_files = sorted(metadata_dir_path.glob("*.csv"))
     
@@ -21,7 +22,7 @@ def resolve_metadata_csv_path(config):
         raise FileNotFoundError(f"No metadata CSV files found in {metadata_dir_path}")
 
 
-    # TODO: just check for the file metadata_sr32000_nfft048_hop512_nmel12_seg187.cvs values from cfg
+    # Check for the file matching audio configuration values (sr, nfft, hop, nmel, seg)
     # If there's only one CSV, return it
     if len(csv_files) == 1:
         return str(csv_files[0])
@@ -37,6 +38,8 @@ def resolve_metadata_csv_path(config):
         signature_parts.append(f"hop{audio_cfg['hop_length']}")
     if audio_cfg.get("n_mels") is not None:
         signature_parts.append(f"nmel{audio_cfg['n_mels']}")
+    if audio_cfg.get("segment_size") is not None:
+        signature_parts.append(f"seg{audio_cfg['segment_size']}")
     
     # Find CSV that matches all audio config parameters
     for csv_path in csv_files:
@@ -48,6 +51,6 @@ def resolve_metadata_csv_path(config):
     raise FileNotFoundError(
         f"No metadata CSV matched the audio configuration (sr={audio_cfg.get('sr')}, "
         f"n_fft={audio_cfg.get('n_fft')}, hop_length={audio_cfg.get('hop_length')}, "
-        f"n_mels={audio_cfg.get('n_mels')}) in {metadata_dir_path}. "
+        f"n_mels={audio_cfg.get('n_mels')}, segment_size={audio_cfg.get('segment_size')}) in {metadata_dir_path}. "
         f"Available files: {[path.name for path in csv_files]}"
     )
