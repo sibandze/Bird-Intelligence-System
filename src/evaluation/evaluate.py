@@ -9,13 +9,14 @@ import seaborn as sns
 
 from src.data.dataset import BirdSongDataset
 from src.models.bird_classifier import BirdClassifier
+from src.utils.config import resolve_metadata_csv_path
 
 def evaluate_model(config):
     device = torch.device(config['training']['device'] if torch.cuda.is_available() else "cpu")
     print(f"\n>>> Running Evaluation on device: {device}")
 
     # 1. Load preprocessed metadata
-    csv_path = config['data']['metadata_csv']
+    csv_path = resolve_metadata_csv_path(config)
     df = pd.read_csv(csv_path)
     
     # Recreate the exact split mapping used in training

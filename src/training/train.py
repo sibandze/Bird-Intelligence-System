@@ -13,6 +13,7 @@ from tqdm import tqdm
 # Import your custom modules
 from src.data.dataset import BirdSongDataset
 from src.models.bird_classifier import BirdClassifier
+from src.utils.config import resolve_metadata_csv_path
 
 def get_dataloaders(config, df):
     """Splits the dataframe and creates PyTorch DataLoaders."""
@@ -55,7 +56,7 @@ def train_model(config):
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     # 2. Load Data
-    csv_path = config['data']['metadata_csv']
+    csv_path = resolve_metadata_csv_path(config)
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Processed CSV not found at {csv_path}. Run --pipeline first.")
     

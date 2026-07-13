@@ -3,7 +3,7 @@
 data:
   raw_audio_dir: "data/raw_audio"
   processed_npy_dir: "data/processed_spectrograms"
-  metadata_csv: "data/metadata.csv"
+  metadata_dir: "data/metadata"
   data_csv: "data/birds_voices.csv"
   num_classes: 5
   num_samples_per_class: 50

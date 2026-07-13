@@ -27,7 +27,7 @@ def load_and_resolve_config(config_path):
         data_cfg['data_csv'] = str(ROOT_DIR / data_cfg['data_csv'])
         data_cfg['raw_audio_dir'] = str(ROOT_DIR / data_cfg['raw_audio_dir'])
         data_cfg['processed_npy_dir'] = str(ROOT_DIR / data_cfg['processed_npy_dir'])
-        data_cfg['metadata_csv'] = str(ROOT_DIR / data_cfg['metadata_csv'])
+        data_cfg['metadata_dir'] = str(ROOT_DIR / data_cfg['metadata_dir'])
     return config
 
 def main():
