@@ -1,4 +1,3 @@
-# experiments/experiment_runner.py
 """Orchestrate multiple training experiments with different configurations."""
 
 import os
@@ -13,8 +12,13 @@ import numpy as np
 import torch
 from typing import Dict, Any, List
 import csv
+from tqdm import tqdm
 
-from sweep_configs import SWEEP_SUITES
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from experiments.sweep_configs import SWEEP_SUITES
+from src.training.experiment_train import ExperimentTrainer
 
 
 class ExperimentManager:
@@ -23,7 +27,7 @@ class ExperimentManager:
     def __init__(self, base_config_path: str, results_dir: str = "results"):
         self.base_config_path = Path(base_config_path)
         self.results_dir = Path(results_dir)
-        self.results_dir.mkdir(exist_ok=True)
+        self.results_dir.mkdir(exist_ok=True, parents=True)
         
         # Load base config
         with open(self.base_config_path, "r") as f:
@@ -33,6 +37,9 @@ class ExperimentManager:
         self.experiment_dir = None
         self.results_csv = None
         self.run_counter = 0
+        
+        # For loading data once
+        self.df = None
 
     def set_seed(self, seed: int = 42):
         """Set random seeds for reproducibility."""
@@ -42,21 +49,36 @@ class ExperimentManager:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-    def create_experiment_run(self, sweep_name: str, run_index: int, hyperparams: Dict[str, Any]) -> tuple[Path, Dict]:
+    def load_data(self):
+        """Load dataset once and cache it."""
+        if self.df is None:
+            import pandas as pd
+            from src.utils.config import resolve_metadata_csv_path
+            
+            csv_path = resolve_metadata_csv_path(self.base_config)
+            if not os.path.exists(csv_path):
+                raise FileNotFoundError(f"Processed CSV not found at {csv_path}. Run data pipeline first with: python main.py --pipeline")
+            
+            self.df = pd.read_csv(csv_path)
+            print(f"✓ Loaded {len(self.df)} samples from {csv_path}")
+        
+        return self.df
+
+    def create_experiment_run(self, sweep_name: str, run_index: int, hyperparams: Dict[str, Any]) -> tuple:
         """Create a unique directory and config for this experiment run."""
         # Create experiment directory structure
         if not self.experiment_dir:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.experiment_name = f"exp_{timestamp}"
             self.experiment_dir = self.results_dir / self.experiment_name
-            self.experiment_dir.mkdir(exist_ok=True)
+            self.experiment_dir.mkdir(exist_ok=True, parents=True)
             
             # Initialize results CSV
             self.results_csv = self.experiment_dir / "results.csv"
         
         # Create run-specific directory
         run_dir = self.experiment_dir / f"run_{run_index:04d}_{sweep_name}"
-        run_dir.mkdir(exist_ok=True)
+        run_dir.mkdir(exist_ok=True, parents=True)
         
         # Create run-specific config
         run_config = self._merge_config_with_hyperparams(hyperparams, run_dir)
@@ -71,6 +93,14 @@ class ExperimentManager:
     def _merge_config_with_hyperparams(self, hyperparams: Dict[str, Any], run_dir: Path) -> Dict:
         """Merge base config with hyperparameter overrides."""
         config = yaml.safe_load(yaml.dump(self.base_config))  # Deep copy
+        
+        # Ensure training section exists
+        if "training" not in config:
+            config["training"] = {}
+        if "model" not in config:
+            config["model"] = {}
+        if "augmentation" not in config:
+            config["augmentation"] = {}
         
         # Map hyperparams to config sections
         param_mapping = {
@@ -129,6 +159,36 @@ class ExperimentManager:
         
         self.run_counter += 1
 
+    def run_experiment(self, run_index: int, sweep_name: str, hyperparams: Dict, dry_run: bool = False):
+        """Run a single training experiment."""
+        run_dir, run_config = self.create_experiment_run(sweep_name, run_index, hyperparams)
+        
+        if dry_run:
+            print(f"  [{run_index}] [DRY RUN] Would train with: {hyperparams}")
+            print(f"      Config: {run_dir}/config.yaml")
+            return None
+        
+        try:
+            # Create trainer and run experiment
+            trainer = ExperimentTrainer(run_config, run_dir)
+            
+            print(f"\n  [{run_index}] Training: {hyperparams}")
+            metrics = trainer.train(self.df)
+            
+            # Log results
+            self.log_run_result(run_index, sweep_name, hyperparams, metrics)
+            
+            print(f"      ✓ Accuracy: {metrics.get('accuracy', 0):.4f} | Macro F1: {metrics.get('macro_f1', 0):.4f}")
+            
+            return metrics
+        
+        except Exception as e:
+            print(f"      ✗ Error: {str(e)}")
+            # Log failure to CSV
+            metrics = {"accuracy": 0.0, "macro_f1": 0.0, "weighted_f1": 0.0, "error": str(e)}
+            self.log_run_result(run_index, sweep_name, hyperparams, metrics)
+            return None
+
     def save_experiment_summary(self):
         """Generate a summary of the experiment."""
         summary_path = self.experiment_dir / "EXPERIMENT_SUMMARY.md"
@@ -142,6 +202,28 @@ class ExperimentManager:
 ## Results Location
 - Detailed results: `{self.results_csv}`
 - Run directories: `{self.experiment_dir}/run_XXXX_*/`
+
+## Best Results
+
+"""
+        
+        # Try to read CSV and show top results
+        if self.results_csv.exists():
+            import pandas as pd
+            try:
+                df_results = pd.read_csv(self.results_csv)
+                df_results_sorted = df_results.sort_values("accuracy", ascending=False)
+                
+                summary += "### Top 5 Runs by Accuracy\n\n"
+                summary += "| Run ID | Accuracy | Macro F1 | Learning Rate | Batch Size |\n"
+                summary += "|--------|----------|----------|---------------|------------|\n"
+                
+                for idx, row in df_results_sorted.head(5).iterrows():
+                    summary += f"| {int(row['run_id'])} | {row['accuracy']:.4f} | {row['macro_f1']:.4f} | {row.get('learning_rate', 'N/A')} | {row.get('batch_size', 'N/A')} |\n"
+            except Exception as e:
+                summary += f"(Error reading results: {e})\n"
+        
+        summary += f"""
 
 ## Instructions
 
@@ -158,11 +240,13 @@ class ExperimentManager:
 After reviewing results:
 - Identify best-performing configurations
 - Use those as baseline for contrastive learning experiments
-- Compare final contrastive model against this baseline
+- Compare final contrastive model against this baseline using: `python scripts/compare_experiments.py`
 """
         
         with open(summary_path, "w") as f:
             f.write(summary)
+        
+        print(f"\n✓ Experiment summary saved to {summary_path}")
 
 
 def main():
@@ -189,7 +273,7 @@ def main():
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print configurations without running"
+        help="Print configurations without running training"
     )
     parser.add_argument(
         "--seed",
@@ -207,44 +291,55 @@ def main():
     # Get sweep suite
     sweep_suite = SWEEP_SUITES[args.suite]
     
-    print(f"\n{'='*70}")
-    print(f"Running Experiment Suite: {args.suite}")
-    print(f"{'='*70}\n")
+    print(f"\n{'='*80}")
+    print(f"🚀 Running Experiment Suite: {args.suite}")
+    print(f"{'='*80}\n")
     
     total_runs = sum(len(sweep.generate_configs()) for sweep in sweep_suite)
-    print(f"Total configurations to run: {total_runs}\n")
+    print(f"📊 Total configurations to run: {total_runs}")
+    
+    if not args.dry_run:
+        print(f"⚠️  This will take approximately {total_runs * 10} minutes (assuming ~10 min/run)")
+        print(f"💾 Results will be saved to: {manager.results_dir}\n")
+        
+        # Load data once
+        try:
+            manager.load_data()
+        except FileNotFoundError as e:
+            print(f"❌ Error: {e}")
+            sys.exit(1)
     
     run_index = 0
     
     # Iterate through sweeps
     for sweep in sweep_suite:
-        print(f"\n>>> Sweep: {sweep.name}")
-        print(f"    Description: {sweep.description}")
-        print(f"    Configurations: {len(sweep.generate_configs())}")
+        print(f"\n{'─'*80}")
+        print(f"📋 Sweep: {sweep.name}")
+        print(f"   Description: {sweep.description}")
+        print(f"{'─'*80}")
         
         configs = sweep.generate_configs()
+        print(f"   Configurations: {len(configs)}\n")
         
         for config_idx, hyperparams in enumerate(configs, 1):
-            run_dir, run_config = manager.create_experiment_run(sweep.name, run_index, hyperparams)
-            
-            print(f"\n  [{config_idx}/{len(configs)}] Run {run_index}: {hyperparams}")
-            
-            if args.dry_run:
-                print(f"      [DRY RUN] Would save config to {run_dir}/config.yaml")
-            else:
-                # TODO: Here is where you would call the actual training function
-                # from src.training.train import train_model
-                # metrics = train_model(run_config)
-                # manager.log_run_result(run_index, sweep.name, hyperparams, metrics)
-                print(f"      [PLACEHOLDER] Training would run here")
-                print(f"      Config saved to: {run_dir}/config.yaml")
-            
+            manager.run_experiment(run_index, sweep.name, hyperparams, dry_run=args.dry_run)
             run_index += 1
     
+    # Save summary
     manager.save_experiment_summary()
-    print(f"\n{'='*70}")
-    print(f"Experiment complete! Results saved to: {manager.experiment_dir}")
-    print(f"{'='*70}\n")
+    
+    print(f"\n{'='*80}")
+    print(f"✅ Experiment complete!")
+    print(f"📁 Results saved to: {manager.experiment_dir}")
+    print(f"{'='*80}\n")
+    
+    # Print next steps
+    print("📖 Next Steps:")
+    print(f"   1. cd results/{manager.experiment_name}")
+    print(f"   2. cat results.csv | head -20  # View top results")
+    print(f"   3. Review EXPERIMENT_SUMMARY.md for overview")
+    print(f"   4. Inspect individual run_XXXX_*/ directories for details")
+    print()
 
 
 if __name__ == "__main__":
