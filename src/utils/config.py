@@ -1,5 +1,76 @@
+"""Configuration loading and resolution utilities."""
+
+import math
+import yaml
 from pathlib import Path
 
+def load_and_resolve_config(root_dir: str | Path, config_rel_path: str) -> dict:
+    """
+    Loads YAML from root_dir / config_rel_path, resolves all data paths to absolute,
+    and computes segment_size from segment_seconds.
+
+    Args:
+        root_dir: Project root directory
+        config_rel_path: Path to config.yaml relative to root_dir. e.g. "configs/config.yaml"
+
+    Returns:
+        Fully resolved config dict with absolute paths and derived audio params.
+    """
+    ROOT_DIR = Path(root_dir).resolve()
+    full_config_path = ROOT_DIR / config_rel_path
+
+    if not full_config_path.exists():
+        raise FileNotFoundError(f"Config not found: {full_config_path}")
+
+    with open(full_config_path, "r") as file:
+        config = yaml.safe_load(file)
+
+    config['project_root'] = str(ROOT_DIR)
+    config['config_path'] = str(full_config_path)
+
+    # 1. Resolve data paths to absolute
+    if 'data' not in config:
+        raise KeyError("Missing 'data' section in config")
+
+    for key in ['raw_audio_dir', 'processed_npy_dir', 'metadata_dir', 'data_csv']:
+        if key not in config['data']:
+            raise KeyError(f"Missing 'data.{key}' in config")
+        config['data'][key] = str(ROOT_DIR / config['data'][key])
+
+    # 2. Compute segment_size - all keys required, no defaults
+    if 'audio' not in config or 'model' not in config:
+        raise KeyError("Missing 'audio' or 'model' section in config")
+
+    audio_cfg = config['audio']
+    model_cfg = config['model']
+
+    for k in ['sr', 'n_fft', 'hop_length', 'n_mels']:
+        if k not in audio_cfg:
+            raise KeyError(f"Missing 'audio.{k}' in config")
+    if 'patch_size' not in model_cfg:
+        raise KeyError(f"Missing 'model.patch_size' in config")
+
+    if 'segment_seconds' in audio_cfg:
+        sr = audio_cfg['sr']
+        hop_length = audio_cfg['hop_length']
+        patch_size = model_cfg['patch_size']
+        segment_seconds = audio_cfg['segment_seconds']
+
+        frames = int(segment_seconds * sr / hop_length)
+        segment_size = math.ceil(frames / patch_size) * patch_size
+
+        audio_cfg['segment_size'] = segment_size
+        audio_cfg['n_frames_raw'] = frames
+        audio_cfg['segment_seconds_actual'] = segment_size * hop_length / sr
+
+        print(f"✓ segment_seconds={segment_seconds}s -> {frames} frames -> segment_size={segment_size} "
+              f"({segment_size * hop_length / sr:.2f}s) [patch={patch_size}]")
+
+    elif 'segment_size' not in audio_cfg:
+        raise KeyError("config['audio'] must contain either 'segment_seconds' or 'segment_size'")
+
+    return config
+    
 def resolve_metadata_csv_path(config):
     """Return the metadata CSV path with EXACT audio configuration match."""
     data_cfg = config.get("data", {})
