@@ -13,7 +13,7 @@ from tqdm import tqdm
 # Import your custom modules
 from src.data.dataset import BirdSongDataset
 from src.models.bird_classifier import BirdClassifier
-from src.utils.config import resolve_metadata_csv_path
+from src.utils.configs import resolve_metadata_csv_path
 
 def get_dataloaders(config, df):
     """Splits the dataframe and creates PyTorch DataLoaders."""
