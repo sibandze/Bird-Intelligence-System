@@ -5,8 +5,14 @@ import numpy as np
 from .process_audio import load_local_spectrogram
 
 class BirdSongDataset(torch.utils.data.Dataset):
-    def __init__(self, df: pd.DataFrame, segment_size, train=True, label_to_idx=None, 
-                 min_db, max_db, spec_aug_config=None):
+    def __init__(self, 
+                 df: pd.DataFrame, 
+                 segment_size: int, 
+                 min_db: int,
+                 max_db: int,
+                 train=True, 
+                 label_to_idx=None, 
+                 spec_aug_config=None):
         self.df = df.reset_index(drop=True)
         self.segment_size = segment_size
         self.train = train
