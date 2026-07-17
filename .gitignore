@@ -206,13 +206,16 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Ignore local data assets
-data/processed_spectrograms/
-*.tar.gz
+
 
 # ============================================================================
 # Project-specific exclusions (Large experiment results & model checkpoints)
 # ============================================================================
+
+# Ignore local data assets
+data/processed_spectrograms/
+data/metadata/
+*.tar.gz
 
 # Experiment results (can be very large - CSVs, JSONs, reports)
 results/
