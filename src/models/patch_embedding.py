@@ -1,3 +1,5 @@
+# src/models/patch_embedding.py
+
 import torch
 import torch.nn as nn
 
