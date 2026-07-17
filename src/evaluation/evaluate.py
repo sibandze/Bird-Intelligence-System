@@ -33,7 +33,9 @@ def evaluate_model(config):
     test_dataset = BirdSongDataset(
         df=test_df, 
         segment_size=config['audio']['segment_size'], 
-        train=False
+        train=False,
+        min_db=config['audio']['min_db'],
+        max_db=config['audio']['max_db'],
     )
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False)
 
