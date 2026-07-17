@@ -1,3 +1,5 @@
+# src/models/bird_classifier.py
+
 """
 Mel Spectrogram
         │
