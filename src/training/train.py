@@ -19,6 +19,8 @@ def get_dataloaders(config, df):
     """Splits the dataframe and creates PyTorch DataLoaders."""
     batch_size = config['training']['batch_size']
     segment_size = config['audio']['segment_size']
+    min_db = config['audio']['min_db']
+    max_db = config['audio']['max_db']
 
     # Stratified split to ensure equal class representation in train and test
     train_df, test_df = train_test_split(
@@ -31,14 +33,22 @@ def get_dataloaders(config, df):
     print(f"Data split: {len(train_df)} training samples, {len(test_df)} validation samples.")
 
     # Create Datasets
-    train_dataset = BirdSongDataset(df=train_df, segment_size=segment_size, train=True)
+    train_dataset = BirdSongDataset(
+        df=train_df, 
+        segment_size=segment_size, 
+        train=True,
+        min_db=min_db,
+        max_db=max_db,
+    )
 
     # Pass the train label map to test to ensure class IDs match perfectly
     test_dataset = BirdSongDataset(
         df=test_df,
         segment_size=segment_size,
         train=False,
-        label_to_idx=train_dataset.label_to_idx
+        label_to_idx=train_dataset.label_to_idx,        
+        min_db=min_db,
+        max_db=max_db,
     )
 
     # Create DataLoaders
