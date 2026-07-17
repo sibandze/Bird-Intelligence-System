@@ -1,5 +1,3 @@
-# DATASET.md
-
 # Bird Intelligence System
 
 ## Dataset Documentation
