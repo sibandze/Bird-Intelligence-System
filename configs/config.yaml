@@ -29,6 +29,11 @@ training:
   learning_rate: 0.0001
   device: "cuda" # or "cpu", "mps"
   num_workers: 2
+  weight_decay: 0.01
+  # === Scheduler Configuration ===
+  scheduler_type: "cosine"           # Options: constant, cosine, linear_decay, cosine_warm_restarts, reduce_on_plateau, one_cycle
+  warmup_steps: 500                  # Linear warmup steps (0 = no warmup)
+  min_lr: 1.0e-6                    # Minimum learning rate for decay schedulers
 
 augmentation:
   enabled: true
