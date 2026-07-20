@@ -14,6 +14,8 @@ from tqdm import tqdm
 from src.data.dataset import BirdSongDataset
 from src.models.bird_classifier import BirdClassifier
 from src.utils.configs import resolve_metadata_csv_path
+from src.training.scheduler import create_scheduler, get_scheduler_step_frequency
+
 
 def get_dataloaders(config, df):
     """Splits the dataframe and creates PyTorch DataLoaders."""
@@ -34,8 +36,8 @@ def get_dataloaders(config, df):
 
     # Create Datasets
     train_dataset = BirdSongDataset(
-        df=train_df, 
-        segment_size=segment_size, 
+        df=train_df,
+        segment_size=segment_size,
         train=True,
         min_db=min_db,
         max_db=max_db,
@@ -46,7 +48,7 @@ def get_dataloaders(config, df):
         df=test_df,
         segment_size=segment_size,
         train=False,
-        label_to_idx=train_dataset.label_to_idx,        
+        label_to_idx=train_dataset.label_to_idx,
         min_db=min_db,
         max_db=max_db,
     )
@@ -56,6 +58,7 @@ def get_dataloaders(config, df):
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
     return train_loader, test_loader
+
 
 def train_model(config):
     # 1. Setup device and directories
@@ -85,8 +88,32 @@ def train_model(config):
 
     # 4. Optimizer and Loss
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=config['training']['learning_rate'])
+    optimizer = optim.AdamW(
+        model.parameters(), 
+        lr=config['training']['learning_rate'],
+        weight_decay=config['training'].get('weight_decay', 0.01)
+    )
     epochs = config['training']['epochs']
+
+    # Setup Scheduler 
+    scheduler_type = config['training'].get('scheduler_type', 'cosine')
+    warmup_steps = config['training'].get('warmup_steps', 0)
+    total_steps = len(train_loader) * epochs
+    
+    scheduler = create_scheduler(
+        optimizer=optimizer,
+        scheduler_type=scheduler_type,
+        warmup_steps=warmup_steps,
+        total_steps=total_steps,
+        min_lr=config['training'].get('min_lr', 1e-6)
+    )
+    
+    step_frequency = get_scheduler_step_frequency(scheduler_type)
+    
+    if scheduler is not None:
+        print(f"Using scheduler: {scheduler_type} (warmup: {warmup_steps} steps, step per: {step_frequency})")
+    else:
+        print("No scheduler (constant learning rate)")
 
     best_val_acc = 0.0
 
@@ -113,13 +140,19 @@ def train_model(config):
             loss.backward()
             optimizer.step()
 
+            # === NEW: Step scheduler per batch ===
+            if scheduler is not None and step_frequency == 'batch':
+                scheduler.step()
+
             # Tracking
             train_loss += loss.item() * mel_segments.size(0)
             _, predicted = logits.max(1)
             train_total += labels.size(0)
             train_correct += predicted.eq(labels).sum().item()
 
-            pbar.set_postfix({'loss': f"{loss.item():.4f}"})
+            # Show current LR in progress bar
+            current_lr = optimizer.param_groups[0]['lr']
+            pbar.set_postfix({'loss': f"{loss.item():.4f}", 'lr': f"{current_lr:.2e}"})
 
         train_acc = train_correct / train_total
         avg_train_loss = train_loss / train_total
@@ -144,9 +177,17 @@ def train_model(config):
         val_acc = val_correct / val_total
         avg_val_loss = val_loss / val_total
 
+        # Step scheduler per epoch (for ReduceLROnPlateau)
+        if scheduler is not None and step_frequency == 'epoch':
+            if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(avg_val_loss)
+            else:
+                scheduler.step()
+
         print(f"Epoch {epoch+1}/{epochs} - "
               f"Train Loss: {avg_train_loss:.4f}, Train Acc: {train_acc:.4f} | "
-              f"Val Loss: {avg_val_loss:.4f}, Val Acc: {val_acc:.4f}")
+              f"Val Loss: {avg_val_loss:.4f}, Val Acc: {val_acc:.4f} | "
+              f"LR: {optimizer.param_groups[0]['lr']:.2e}")
 
         # Save the best model
         if val_acc > best_val_acc:
