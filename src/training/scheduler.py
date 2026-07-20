@@ -1,8 +1,102 @@
 # src/training/scheduler.py
-"""Learning rate schedulers for transformer training."""
+"""
+Learning rate scheduler factory.
+
+Supports:
+
+- Constant LR
+- Linear warmup
+- Cosine Annealing
+- Linear Decay
+- Cosine Warm Restarts
+- ReduceLROnPlateau
+- OneCycleLR
+
+The scheduler factory is configuration driven and intended for
+research experiments where schedulers can easily be swapped from
+the configuration file.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
 
 import torch.optim as optim
-from typing import Optional
+from torch.optim.lr_scheduler import (
+    SequentialLR,
+    LinearLR,
+    LambdaLR,
+    CosineAnnealingLR,
+    CosineAnnealingWarmRestarts,
+    ReduceLROnPlateau,
+    OneCycleLR,
+)
+
+
+# ---------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------
+
+
+def _validate_scheduler_args(
+    optimizer: optim.Optimizer,
+    scheduler_type: str,
+    warmup_steps: int,
+    total_steps: int,
+    min_lr: float,
+) -> None:
+    """Validate scheduler configuration."""
+
+    if total_steps <= 0:
+        raise ValueError("total_steps must be > 0")
+
+    if warmup_steps < 0:
+        raise ValueError("warmup_steps must be >= 0")
+
+    if warmup_steps >= total_steps:
+        raise ValueError(
+            "warmup_steps must be smaller than total_steps"
+        )
+
+    if min_lr < 0:
+        raise ValueError("min_lr must be >= 0")
+
+    base_lr = optimizer.param_groups[0]["lr"]
+
+    if base_lr <= 0:
+        raise ValueError("Optimizer learning rate must be > 0")
+
+    if min_lr >= base_lr:
+        raise ValueError(
+            f"min_lr ({min_lr}) must be smaller than "
+            f"optimizer lr ({base_lr})"
+        )
+
+
+# ---------------------------------------------------------------------
+# Linear decay helper
+# ---------------------------------------------------------------------
+
+
+def _linear_decay_lambda(
+    current_step: int,
+    total_steps: int,
+    min_factor: float,
+):
+    """
+    Linear decay from 1.0 -> min_factor.
+
+    Returns a multiplicative factor.
+    """
+
+    progress = min(current_step / total_steps, 1.0)
+
+    return 1.0 - progress * (1.0 - min_factor)
+
+
+# ---------------------------------------------------------------------
+# Scheduler factory
+# ---------------------------------------------------------------------
 
 
 def create_scheduler(
@@ -11,100 +105,179 @@ def create_scheduler(
     warmup_steps: int = 0,
     total_steps: int = 1000,
     min_lr: float = 1e-6,
-) -> Optional[optim.lr_scheduler._LRScheduler]:
+    warmup_start_factor: float = 0.1,
+    plateau_factor: float = 0.5,
+    plateau_patience: int = 10,
+    cosine_restart_t0: Optional[int] = None,
+    cosine_restart_mult: int = 2,
+    one_cycle_pct_start: float = 0.3,
+):
     """
-    Creates a learning rate scheduler with optional warmup.
-    
-    Args:
-        optimizer: The optimizer to schedule
-        scheduler_type: One of ['constant', 'cosine', 'linear_decay', 'cosine_warm_restarts', 'reduce_on_plateau', 'one_cycle']
-        warmup_steps: Number of warmup steps (uses linear warmup)
-        total_steps: Total training steps for schedulers that need it
-        min_lr: Minimum learning rate for decay schedulers
-    
-    Returns:
-        A PyTorch scheduler, or None if 'constant' with no warmup
+    Create a learning rate scheduler.
+
+    Parameters
+    ----------
+    optimizer
+        Optimizer instance.
+
+    scheduler_type
+        Name of scheduler.
+
+    warmup_steps
+        Number of linear warmup iterations.
+
+    total_steps
+        Total optimizer steps.
+
+    min_lr
+        Minimum learning rate.
+
+    Returns
+    -------
+    Scheduler or None.
     """
-    
-    # If no scheduler needed
+
     if scheduler_type == "constant" and warmup_steps == 0:
         return None
-    
-    # Create warmup scheduler if specified
+
+    _validate_scheduler_args(
+        optimizer,
+        scheduler_type,
+        warmup_steps,
+        total_steps,
+        min_lr,
+    )
+
+    base_lr = optimizer.param_groups[0]["lr"]
+
+    # -------------------------------------------------------------
+    # Warmup
+    # -------------------------------------------------------------
+
+    warmup_scheduler = None
+
     if warmup_steps > 0:
-        warmup_scheduler = optim.lr_scheduler.LinearLR(
-            optimizer, 
-            start_factor=0.1,  # Start at 10% of lr
-            end_factor=1.0,     # End at full lr
-            total_iters=warmup_steps
-        )
-    
-    # Create main scheduler
-    if scheduler_type == "cosine":
-        main_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+
+        if scheduler_type in {
+            "reduce_on_plateau",
+            "one_cycle",
+        }:
+            raise ValueError(
+                f"{scheduler_type} manages its own scheduling. "
+                "External warmup is not supported."
+            )
+
+        warmup_scheduler = LinearLR(
             optimizer,
-            T_max=total_steps - warmup_steps,
-            eta_min=min_lr
+            start_factor=warmup_start_factor,
+            end_factor=1.0,
+            total_iters=warmup_steps,
         )
+
+    # -------------------------------------------------------------
+    # Main scheduler
+    # -------------------------------------------------------------
+
+    remaining_steps = total_steps - warmup_steps
+
+    if scheduler_type == "constant":
+
+        main_scheduler = LambdaLR(
+            optimizer,
+            lr_lambda=lambda step: 1.0,
+        )
+
+    elif scheduler_type == "cosine":
+
+        main_scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=remaining_steps,
+            eta_min=min_lr,
+        )
+
     elif scheduler_type == "linear_decay":
-        main_scheduler = optim.lr_scheduler.LinearLR(
+
+        min_factor = min_lr / base_lr
+
+        main_scheduler = LambdaLR(
             optimizer,
-            start_factor=1.0,
-            end_factor=min_lr,
-            total_iters=total_steps - warmup_steps
+            lr_lambda=lambda step: _linear_decay_lambda(
+                step,
+                remaining_steps,
+                min_factor,
+            ),
         )
+
     elif scheduler_type == "cosine_warm_restarts":
-        main_scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+
+        if cosine_restart_t0 is None:
+            cosine_restart_t0 = max(remaining_steps // 3, 1)
+
+        main_scheduler = CosineAnnealingWarmRestarts(
             optimizer,
-            T_0=total_steps // 3,  # Restart every 1/3 of training
-            T_mult=2,
-            eta_min=min_lr
+            T_0=cosine_restart_t0,
+            T_mult=cosine_restart_mult,
+            eta_min=min_lr,
         )
+
     elif scheduler_type == "reduce_on_plateau":
-        # This requires validation loss, handled separately in training loop
-        return optim.lr_scheduler.ReduceLROnPlateau(
+
+        return ReduceLROnPlateau(
             optimizer,
-            mode='min',
-            factor=0.5,
-            patience=10,
+            mode="min",
+            factor=plateau_factor,
+            patience=plateau_patience,
             min_lr=min_lr,
-            verbose=True
         )
+
     elif scheduler_type == "one_cycle":
-        return optim.lr_scheduler.OneCycleLR(
+
+        return OneCycleLR(
             optimizer,
-            max_lr=optimizer.param_groups[0]['lr'],
+            max_lr=base_lr,
             total_steps=total_steps,
-            pct_start=warmup_steps / total_steps if total_steps > 0 else 0.3,
-            anneal_strategy='cos',
-            final_div_factor=1e4
+            pct_start=one_cycle_pct_start,
+            anneal_strategy="cos",
+            final_div_factor=1e4,
         )
-    elif scheduler_type == "constant":
-        return None
+
     else:
-        raise ValueError(f"Unknown scheduler type: {scheduler_type}")
-    
-    # Combine warmup and main scheduler
-    if warmup_steps > 0:
-        return optim.lr_scheduler.SequentialLR(
-            optimizer,
-            schedulers=[warmup_scheduler, main_scheduler],
-            milestones=[warmup_steps]
+        raise ValueError(
+            f"Unknown scheduler '{scheduler_type}'"
         )
-    
+
+    # -------------------------------------------------------------
+    # Combine warmup + scheduler
+    # -------------------------------------------------------------
+
+    if warmup_scheduler is not None:
+
+        return SequentialLR(
+            optimizer,
+            schedulers=[
+                warmup_scheduler,
+                main_scheduler,
+            ],
+            milestones=[warmup_steps],
+        )
+
     return main_scheduler
 
 
-def get_scheduler_step_frequency(scheduler_type: str) -> str:
+# ---------------------------------------------------------------------
+# Stepping policy
+# ---------------------------------------------------------------------
+
+
+def get_scheduler_step_frequency(
+    scheduler_type: str,
+) -> str:
     """
-    Returns whether scheduler steps per 'epoch' or 'batch'.
-    
-    Args:
-        scheduler_type: The scheduler type string
-    
-    Returns:
-        'epoch' for ReduceLROnPlateau, 'batch' for everything else
+    Returns whether scheduler should step every
+    optimizer batch or every validation epoch.
     """
+
     if scheduler_type == "reduce_on_plateau":
         return "epoch"
+
     return "batch"
