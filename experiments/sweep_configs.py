@@ -84,8 +84,18 @@ WARMUP_SCHEDULER_SWEEP = HyperparameterSweep(
     name="warmup_scheduler",
     description="Compare different warmup and scheduling strategies",
     params={
+        "scheduler_type": ["constant", "cosine", "linear_decay", "reduce_on_plateau", "cosine_warm_restarts"],
         "warmup_steps": [0, 500, 1000],
-        "scheduler_type": ["constant", "linear_decay", "cosine"],
+    }
+)
+
+SCHEDULER_FINETUNE_SWEEP = HyperparameterSweep(
+    name="scheduler_finetune",
+    description="Fine-tune cosine scheduler parameters",
+    params={
+        "scheduler_type": ["cosine"],
+        "warmup_steps": [250, 500, 1000, 2000],
+        "min_lr": [1e-6, 1e-5, 1e-4],
     }
 )
 
@@ -120,5 +130,9 @@ SWEEP_SUITES = {
         FOCUSED_LR_MOMENTUM_SWEEP,
         WARMUP_SCHEDULER_SWEEP,
         MIXED_PRECISION_SWEEP,
+    ],
+    "scheduler_ablation": [
+        SCHEDULER_FINETUNE_SWEEP,
+        WARMUP_SCHEDULER_SWEEP,
     ],
 }
