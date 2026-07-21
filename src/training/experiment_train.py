@@ -46,8 +46,6 @@ class ExperimentTrainer:
         else:
             self.training_history = []
     
-        self.best_val_acc = 0.0
-        self.best_epoch = 0
     
     def get_dataloaders(self, df: pd.DataFrame) -> Tuple[DataLoader, DataLoader, Dict[str, int], Dict[int, str]]:
         """Create train/val dataloaders and label mappings."""
@@ -338,7 +336,7 @@ class ExperimentTrainer:
         self._save_training_history()
         
         # Evaluate on test set with best model 
-        best_checkpoint = torch.load(self.run_dir / "checkpoint_best.pth", weights_only=True)
+        best_checkpoint = torch.load(self.run_dir / "checkpoint_best.pth", weights_only=False)
         model.load_state_dict(best_checkpoint["model_state_dict"])
         
         metrics = self._evaluate(model, test_loader, class_names)
