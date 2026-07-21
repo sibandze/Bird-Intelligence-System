@@ -243,7 +243,14 @@ class ExperimentTrainer:
 
             print(f"Epoch {epoch+1}/{epochs} | Train Loss: {avg_train_loss:.4f} | Train Acc: {train_acc:.4f} | "
                   f"Val Loss: {avg_val_loss:.4f} | Val Acc: {val_acc:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
-
+            
+            # TODO: memory logging every few epoch
+            from src.utils.memory_utils import log_memory_usage
+            log_memory_usage(
+                prefix=f"Epoch {epoch+1}",
+                device=self.device,
+            )
+            
             # Save best model
             if val_acc > self.best_val_acc:
                 self.best_val_acc = val_acc
@@ -310,3 +317,10 @@ class ExperimentTrainer:
         metrics_collector.generate_markdown_report()
         
         return metrics
+
+"""
+    TODO:
+        1. 
+
+
+"""
