@@ -23,7 +23,6 @@ from src.training.precision import PrecisionManager
 
 class ExperimentTrainer:
     """Training orchestrator for experiments with comprehensive logging."""
-    
     def __init__(self, config: Dict[str, Any], run_dir: Path):
         self.config = config
         self.run_dir = Path(run_dir)
@@ -35,8 +34,18 @@ class ExperimentTrainer:
             device=self.device.type,
             use_bfloat16=config["training"].get("mixed_precision", {}).get("use_bfloat16", False),
         )
-
-        self.training_history = []
+        
+        self.best_val_acc = 0.0
+        self.best_epoch = 0
+        
+        # Load existing history if resuming, otherwise start fresh
+        history_path = self.run_dir / "training_metrics.json"
+        if history_path.exists():
+            with open(history_path, "r") as f:
+                self.training_history = json.load(f)
+        else:
+            self.training_history = []
+    
         self.best_val_acc = 0.0
         self.best_epoch = 0
     
