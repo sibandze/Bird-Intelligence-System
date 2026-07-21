@@ -32,7 +32,7 @@ class ExperimentTrainer:
         self.run_dir.mkdir(exist_ok=True, parents=True)
         
         self.device = torch.device(config['training'].get('device', 'cuda') if torch.cuda.is_available() else 'cpu')
-        self.amp_mgr = MixedPrecisionManager(
+        self.precision = PrecisionManager(
             enabled=config["training"].get("mixed_precision", {}).get("enabled", True),
             device=self.device.type,
             use_bfloat16=config["training"].get("mixed_precision", {}).get("use_bfloat16", False),
@@ -173,23 +173,23 @@ class ExperimentTrainer:
 
                 optimizer.zero_grad(set_to_none=True)
 
-                with self.amp_mgr.autocast():
+                with self.precision.autocast():
                    logits = model(mel_segments)
                    loss = criterion(logits, labels)
 
-                self.amp_mgr.scale_loss(loss).backward()
+                self.precision.scale_loss(loss).backward()
 
                 gradient_clip_val = self.config["training"].get("gradient_clip")
 
                 if gradient_clip_val is not None:
-                    self.amp_mgr.unscale_gradients(optimizer)
+                    self.precision.unscale_gradients(optimizer)
                     torch.nn.utils.clip_grad_norm_(
                         model.parameters(),
                         gradient_clip_val,
                      )
 
-                self.amp_mgr.step(optimizer)
-                self.amp_mgr.update()
+                self.precision.step(optimizer)
+                self.precision.update()
 
                 # Step scheduler per batch
                 if scheduler is not None and step_frequency == 'batch':
