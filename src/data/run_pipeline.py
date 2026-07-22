@@ -4,12 +4,10 @@ import os
 import pandas as pd
 from pathlib import Path
 
-# Note the relative imports now that this is called from the root main.py
 from .download import download_audio
 from .process_audio import preprocess_and_save
 
 def run_data_pipeline(config):
-    # Extract settings from the config dictionary
     data_cfg = config['data']
     audio_cfg = config['audio']
 
@@ -69,22 +67,20 @@ def run_data_pipeline(config):
             continue
 
         if not local_audio_path.exists():
-            # Pass output_dir from config
             downloaded_file = download_audio(url, audio_filename, output_dir=str(RAW_AUDIO_DIR))
             if not downloaded_file:
                 print(f"  ⚠️ Failed downloading {xc_id}. Skipping.")
                 continue
 
-        # Pass audio specs from config
         success = preprocess_and_save(
-            str(local_audio_path), 
+            str(local_audio_path),
             str(local_npy_path),
             sr=audio_cfg['sr'],
             n_fft=audio_cfg['n_fft'],
             hop_length=audio_cfg['hop_length'],
             n_mels=audio_cfg['n_mels']
         )
-        
+
         if success:
             row_dict = row.to_dict()
             row_dict['scientific_name_id'] = sci_to_id[row['scientific_name']]
@@ -99,14 +95,13 @@ def run_data_pipeline(config):
         f"_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}"
         f"_seg{audio_cfg['segment_size']}.csv"
     )
-    
-    # Ensure parent dir exists if modified in config
-    os.makedirs(output_metadata_csv.parent, exist_ok=True) 
-    
+
+    os.makedirs(output_metadata_csv.parent, exist_ok=True)
+
     final_df = pd.DataFrame(processed_rows)
     final_df.to_csv(output_metadata_csv, index=False)
-    
-    print("\nStep 5: Cleaning up raw audio files...")
+
+    print("\nStep 4: Cleaning up raw audio files...")
     deleted_count = 0
     for audio_file in RAW_AUDIO_DIR.glob("*.ogg"):
         try:
@@ -114,7 +109,7 @@ def run_data_pipeline(config):
             deleted_count += 1
         except Exception as e:
             print(f"  ⚠️ Failed to delete {audio_file}: {e}")
-            
+
     print("\n" + "="*50)
     print(f"Processing complete! Aligned dataset metadata saved to: {output_metadata_csv}")
     print(f"Successfully processed {len(final_df)} files across {num_classes} classes.")
