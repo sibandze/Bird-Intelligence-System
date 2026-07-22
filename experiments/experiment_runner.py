@@ -81,12 +81,13 @@ class ExperimentManager:
             # Initialize results CSV
             self.results_csv = self.experiment_dir / "results.csv"
         
-        # Create run-specific directory
-        run_dir = self.experiment_dir / f"run_{run_index:04d}_{sweep_name}"
+        # 1. Generate run_name matching directory naming convention
+        run_name = f"run_{run_index:04d}_{sweep_name}"
+        run_dir = self.experiment_dir / run_name
         run_dir.mkdir(exist_ok=True, parents=True)
         
-        # Create run-specific config
-        run_config = self._merge_config_with_hyperparams(hyperparams, run_dir)
+        # 2. Pass run_name into config generator
+        run_config = self._merge_config_with_hyperparams(hyperparams, run_dir, run_name)
         
         # Save config to run directory
         config_path = run_dir / "config.yaml"
@@ -95,17 +96,19 @@ class ExperimentManager:
         
         return run_dir, run_config
 
-    def _merge_config_with_hyperparams(self, hyperparams: Dict[str, Any], run_dir: Path) -> Dict:
+    def _merge_config_with_hyperparams(self, hyperparams: Dict[str, Any], run_dir: Path, run_name: str) -> Dict:
         """Merge base config with hyperparameter overrides."""
         config = yaml.safe_load(yaml.dump(self.base_config))  # Deep copy
         
-        # Ensure training section exists
+        # Ensure sections exist
         if "training" not in config:
             config["training"] = {}
         if "model" not in config:
             config["model"] = {}
         if "augmentation" not in config:
             config["augmentation"] = {}
+        if "logging" not in config:
+            config["logging"] = {}
         
         # Map hyperparams to config sections
         param_mapping = {
@@ -131,8 +134,16 @@ class ExperimentManager:
                     config[section] = {}
                 config[section][key] = param_value
         
+        # Configure logging and W&B settings dynamically
+        config["logging"]["wandb_run_name"] = run_name
+        config["logging"]["wandb_run_id"] = f"{self.experiment_name}_{run_name}"
+        if "wandb_project" not in config["logging"]:
+            config["logging"]["wandb_project"] = "bird-song-classifier"
+        
         # Add experiment metadata
         config["experiment"] = {
+            "name": run_name,
+            "experiment_group": self.experiment_name,
             "run_dir": str(run_dir),
             "timestamp": datetime.now().isoformat(),
             "hyperparams": hyperparams,
@@ -140,6 +151,7 @@ class ExperimentManager:
         
         return config
 
+    
     def log_run_result(self, run_index: int, sweep_name: str, hyperparams: Dict, metrics: Dict):
         """Append run results to the results CSV."""
         # Prepare row
