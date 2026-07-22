@@ -134,7 +134,11 @@ class ExperimentTrainer:
 
         if compiled:
             self.model = torch.compile(self.model)
-
+            # TODO:
+            # Benchmark torch.compile() separately.
+            # Compilation introduces startup overhead and is beneficial
+            # primarily for long training runs.
+        
         criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.AdamW(
             self.model.parameters(),
