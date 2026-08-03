@@ -1,18 +1,18 @@
 # src/data/windowing/__init__.py
-from .base import BaseSamplingStrategy
-from .factory import build_sampling_strategy
+from .index import WindowIndex
+from .base import BaseWindowStrategy
 from .strategies import (
-    RandomSamplingStrategy,
-    CenterSamplingStrategy,
-    SlidingSamplingStrategy,
-    SlidingJitterSamplingStrategy,
+    SlidingWindowStrategy,
+    RandomWindowStrategy,
+    CenterWindowStrategy,
 )
+from .factory import build_window_strategy
 
 __all__ = [
-    "BaseSamplingStrategy",
-    "build_sampling_strategy",
-    "RandomSamplingStrategy",
-    "CenterSamplingStrategy",
-    "SlidingSamplingStrategy",
-    "SlidingJitterSamplingStrategy",
+    "WindowIndex",
+    "BaseWindowStrategy",
+    "SlidingWindowStrategy",
+    "RandomWindowStrategy",
+    "CenterWindowStrategy",
+    "build_window_strategy",
 ]
