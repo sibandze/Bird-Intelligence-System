@@ -1,113 +1,106 @@
-# src/data/windowing/strategies.py
-
+import math
 import random
-from .base import BaseSamplingStrategy
+import pandas as pd
+from .base import BaseWindowStrategy
+from .index import WindowIndex
 
 
-class RandomSamplingStrategy(BaseSamplingStrategy):
+class SlidingWindowStrategy(BaseWindowStrategy):
     """
-    Baseline sampling strategy.
-    Randomly crops during training; center crops during evaluation.
-    """
-
-    def get_start_frame(
-        self,
-        total_frames: int,
-        segment_size: int,
-        epoch: int = 0,
-        is_train: bool = True
-    ) -> int:
-        max_start = total_frames - segment_size
-        if max_start <= 0:
-            return 0
-
-        if is_train:
-            return random.randint(0, max_start)
-        else:
-            return max_start // 2
-
-
-class CenterSamplingStrategy(BaseSamplingStrategy):
-    """Always crops the deterministic center of the spectrogram."""
-
-    def get_start_frame(
-        self,
-        total_frames: int,
-        segment_size: int,
-        epoch: int = 0,
-        is_train: bool = True
-    ) -> int:
-        max_start = total_frames - segment_size
-        if max_start <= 0:
-            return 0
-        return max_start // 2
-
-
-class SlidingSamplingStrategy(BaseSamplingStrategy):
-    """
-    Deterministic sliding window sampling across epochs with clamping.
+    Expands the dataset index space across all valid temporal windows.
     
-    Advances window start by `stride` frames every epoch.
-    Clamps to `max_start` when the window exceeds audio bounds.
+    Guarantees every recording is fully covered every epoch using the given stride.
+    Clamps the final window to ensure trailing audio coverage without exceeding bounds.
     """
 
     def __init__(self, stride: int = 256):
+        if stride <= 0:
+            raise ValueError(f"Stride must be positive, got {stride}")
         self.stride = stride
 
-    def get_start_frame(
-        self,
-        total_frames: int,
-        segment_size: int,
-        epoch: int = 0,
-        is_train: bool = True
-    ) -> int:
-        max_start = total_frames - segment_size
-        if max_start <= 0:
-            return 0
+    def build_window_index(
+        self, 
+        df: pd.DataFrame, 
+        segment_size: int, 
+        get_frames_fn: callable
+    ) -> list[WindowIndex]:
+        windows = []
 
-        # Center crop during evaluation to ensure deterministic evaluation
-        if not is_train:
-            return max_start // 2
+        for idx, row in df.iterrows():
+            total_frames = get_frames_fn(row, idx)
 
-        # Compute sliding start based on current epoch
-        start = epoch * self.stride
+            if total_frames <= segment_size:
+                # Audio shorter or equal to segment size -> single padded window [0, segment_size]
+                windows.append(WindowIndex(
+                    recording_idx=idx, 
+                    start_frame=0, 
+                    end_frame=segment_size
+                ))
+            else:
+                max_start = total_frames - segment_size
+                num_windows = math.ceil(max_start / self.stride) + 1
 
-        # Handle End-of-Recording via Clamping
-        return min(start, max_start)
+                for w in range(num_windows):
+                    start = min(w * self.stride, max_start)
+                    windows.append(WindowIndex(
+                        recording_idx=idx,
+                        start_frame=start,
+                        end_frame=start + segment_size
+                    ))
+
+        return windows
 
 
-class SlidingJitterSamplingStrategy(BaseSamplingStrategy):
+class RandomWindowStrategy(BaseWindowStrategy):
     """
-    Sliding window with stochastic frame jitter.
-    
-    Calculates sliding base position from epoch and adds a random frame offset 
-    within [-jitter_max, +jitter_max].
+    Legacy 1-crop per recording mode. Randomly generates a single window index
+    for each recording in the dataframe during index construction.
     """
 
-    def __init__(self, stride: int = 256, jitter_max: int = 16):
-        self.stride = stride
-        self.jitter_max = jitter_max
+    def build_window_index(
+        self, 
+        df: pd.DataFrame, 
+        segment_size: int, 
+        get_frames_fn: callable
+    ) -> list[WindowIndex]:
+        windows = []
 
-    def get_start_frame(
-        self,
-        total_frames: int,
-        segment_size: int,
-        epoch: int = 0,
-        is_train: bool = True
-    ) -> int:
-        max_start = total_frames - segment_size
-        if max_start <= 0:
-            return 0
+        for idx, row in df.iterrows():
+            total_frames = get_frames_fn(row, idx)
+            max_start = max(0, total_frames - segment_size)
+            start = random.randint(0, max_start) if max_start > 0 else 0
 
-        if not is_train:
-            return max_start // 2
+            windows.append(WindowIndex(
+                recording_idx=idx,
+                start_frame=start,
+                end_frame=start + segment_size
+            ))
 
-        # Compute deterministic sliding base position
-        base_start = epoch * self.stride
+        return windows
 
-        # Add random jitter offset
-        jitter = random.randint(-self.jitter_max, self.jitter_max)
-        start = base_start + jitter
 
-        # Clamp within valid recording boundaries [0, max_start]
-        return max(0, min(start, max_start))
+class CenterWindowStrategy(BaseWindowStrategy):
+    """
+    Generates exactly one centered window index per recording.
+    """
+
+    def build_window_index(
+        self, 
+        df: pd.DataFrame, 
+        segment_size: int, 
+        get_frames_fn: callable
+    ) -> list[WindowIndex]:
+        windows = []
+
+        for idx, row in df.iterrows():
+            total_frames = get_frames_fn(row, idx)
+            max_start = max(0, total_frames - segment_size)
+            start = max_start // 2
+
+            windows.append(WindowIndex(
+                recording_idx=idx,
+                start_frame=start,
+                end_frame=start + segment_size
+            ))
+
+        return windows
