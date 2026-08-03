@@ -1,27 +1,32 @@
 # src/data/windowing/base.py
 from abc import ABC, abstractmethod
+import pandas as pd
+from .index import WindowIndex
 
-class BaseSamplingStrategy(ABC):
-    """Abstract base class for audio spectrogram sampling strategies."""
+
+class BaseWindowStrategy(ABC):
+    """
+    Abstract Base Class for windowing strategies that build an index space 
+    of discrete temporal windows from a dataframe of audio recordings.
+    """
 
     @abstractmethod
-    def get_start_frame(
-        self,
-        total_frames: int,
-        segment_size: int,
-        epoch: int = 0,
-        is_train: bool = True
-    ) -> int:
+    def build_window_index(
+        self, 
+        df: pd.DataFrame, 
+        segment_size: int, 
+        get_frames_fn: callable
+    ) -> list[WindowIndex]:
         """
-        Calculates the start frame index for cropping a spectrogram.
+        Builds the complete list of WindowIndex items across all recordings.
 
         Args:
-            total_frames (int): Total number of time frames in the spectrogram (T).
-            segment_size (int): Expected window size in frames.
-            epoch (int): Current epoch number. Defaults to 0.
-            is_train (bool): Whether in training mode.
+            df (pd.DataFrame): Audio recording metadata.
+            segment_size (int): Temporal window length in frames.
+            get_frames_fn (callable): Callback `fn(row, idx) -> int` to obtain 
+                                       the total frame count for a recording.
 
         Returns:
-            int: The starting frame index for the crop.
+            list[WindowIndex]: Complete index space mapping.
         """
         pass
