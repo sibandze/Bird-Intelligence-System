@@ -1,3 +1,4 @@
+# src/data/windowing/strategies.py
 import math
 import random
 import pandas as pd
