@@ -4,7 +4,6 @@ import random
 import numpy as np
 import torch
 import pandas as pd
-from .process_audio import load_local_spectrogram
 from .base import BaseSpectrogramDataset
 
 # =====================================================================
