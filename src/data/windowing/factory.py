@@ -1,43 +1,45 @@
 # src/data/windowing/factory.py
-
 from typing import Dict, Any
-from .base import BaseSamplingStrategy
+from .base import BaseWindowStrategy
 from .strategies import (
-    RandomSamplingStrategy,
-    CenterSamplingStrategy,
-    SlidingSamplingStrategy,
-    SlidingJitterSamplingStrategy,
+    SlidingWindowStrategy,
+    RandomWindowStrategy,
+    CenterWindowStrategy,
 )
 
 
-def build_sampling_strategy(config: Dict[str, Any] = None) -> BaseSamplingStrategy:
-    """
-    Factory function to build a sampling strategy from a config dictionary.
+def build_window_strategy(config: Dict[str, Any] = None) -> BaseWindowStrategy:
+    config = config or {"strategy": "sliding", "stride": 256}
+    strategy_type = config.get("strategy", "sliding").lower()
 
-    Args:
-        config (dict): Configuration options, e.g.:
-                       {"strategy": "sliding", "stride": 256}
-
-    Returns:
-        BaseSamplingStrategy: An instantiated sampling strategy.
-    """
-    config = config or {"strategy": "random"}
-    strategy_type = config.get("strategy", "random").lower()
-
-    if strategy_type == "random":
-        return RandomSamplingStrategy()
-
+    if strategy_type == "sliding":
+        stride = config.get("stride", 256)
+        return SlidingWindowStrategy(stride=stride)
+    elif strategy_type == "random":
+        return RandomWindowStrategy()
     elif strategy_type == "center":
-        return CenterSamplingStrategy()
-
-    elif strategy_type == "sliding":
-        stride = config.get("stride", 256)
-        return SlidingSamplingStrategy(stride=stride)
-
-    elif strategy_type == "sliding_jitter":
-        stride = config.get("stride", 256)
-        jitter_max = config.get("jitter_max", 16)
-        return SlidingJitterSamplingStrategy(stride=stride, jitter_max=jitter_max)
-
+        return CenterWindowStrategy()
     else:
-        raise ValueError(f"Unknown sampling strategy: '{strategy_type}'")
+        raise ValueError(f"Unknown windowing strategy: '{strategy_type}'")# src/data/windowing/factory.py
+from typing import Dict, Any
+from .base import BaseWindowStrategy
+from .strategies import (
+    SlidingWindowStrategy,
+    RandomWindowStrategy,
+    CenterWindowStrategy,
+)
+
+
+def build_window_strategy(config: Dict[str, Any] = None) -> BaseWindowStrategy:
+    config = config or {"strategy": "sliding", "stride": 256}
+    strategy_type = config.get("strategy", "sliding").lower()
+
+    if strategy_type == "sliding":
+        stride = config.get("stride", 256)
+        return SlidingWindowStrategy(stride=stride)
+    elif strategy_type == "random":
+        return RandomWindowStrategy()
+    elif strategy_type == "center":
+        return CenterWindowStrategy()
+    else:
+        raise ValueError(f"Unknown windowing strategy: '{strategy_type}'")
