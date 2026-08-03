@@ -1,3 +1,5 @@
+# src/data/datasets/base.py
+
 import random
 import numpy as np
 import torch
@@ -74,17 +76,3 @@ class BaseSpectrogramDataset(Dataset):
                 mel_tensor[:, :, t0:t0 + t] = 0.0
 
         return mel_tensor
-
-class MoCoDataset(SSLBirdSongDataset):
-    """MoCo Specific Dataset Adapter."""
-    pass
-
-def moco_collate_fn(batch):
-    """
-    Collates [(x1, x2), ...] into query and key batches:
-    (im_q [B, 1, F, T], im_k [B, 1, F, T]).
-    """
-    view1_list, view2_list = zip(*batch)
-    im_q = torch.stack(view1_list, dim=0)
-    im_k = torch.stack(view2_list, dim=0)
-    return im_q, im_k
