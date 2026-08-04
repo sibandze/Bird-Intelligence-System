@@ -22,12 +22,16 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
         self.idx_to_label = {v: k for k, v in self.label_to_idx.items()}
         self.num_classes = len(self.label_to_idx)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx):  
         window = self.windows[idx]
-        row = self.df.iloc[window.recording_idx]
-
+        
         x = self._extract_window_tensor(window)
         x = self._apply_spec_augment(x)
-        y = torch.tensor(int(row['scientific_name_id'])).long()
-
+        
+        row = self.df.iloc[window.recording_idx]
+        
+        y = torch.tensor(
+            int(row["scientific_name_id"])
+        ).long()
+        
         return x, y
