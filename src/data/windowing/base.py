@@ -1,4 +1,5 @@
 # src/data/windowing/base.py
+
 from abc import ABC, abstractmethod
 import pandas as pd
 from .index import WindowIndex
@@ -6,27 +7,41 @@ from .index import WindowIndex
 
 class BaseWindowStrategy(ABC):
     """
-    Abstract Base Class for windowing strategies that build an index space 
-    of discrete temporal windows from a dataframe of audio recordings.
+    Abstract base class for temporal window selection.
+
+    A strategy determines which temporal window from each recording
+    should be exposed during a particular epoch.
     """
 
     @abstractmethod
     def build_window_index(
-        self, 
-        df: pd.DataFrame, 
-        segment_size: int, 
-        get_frames_fn: callable
+        self,
+        df: pd.DataFrame,
+        segment_size: int,
+        get_frames_fn: callable,
+        epoch: int = 0,
+        is_train: bool = True,
     ) -> list[WindowIndex]:
         """
-        Builds the complete list of WindowIndex items across all recordings.
+        Build the window index exposed for one epoch.
 
         Args:
-            df (pd.DataFrame): Audio recording metadata.
-            segment_size (int): Temporal window length in frames.
-            get_frames_fn (callable): Callback `fn(row, idx) -> int` to obtain 
-                                       the total frame count for a recording.
+            df:
+                Recording metadata.
+
+            segment_size:
+                Number of spectrogram frames per training example.
+
+            get_frames_fn:
+                Callback: fn(row, idx) -> total number of frames.
+
+            epoch:
+                Current training epoch.
+
+            is_train:
+                Whether the dataset is being used for training.
 
         Returns:
-            list[WindowIndex]: Complete index space mapping.
+            One or more WindowIndex objects per recording.
         """
         pass
