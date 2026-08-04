@@ -1,34 +1,65 @@
 # src/data/datasets/ssl.py
+
 import pandas as pd
 import torch
 from .base import BaseSpectrogramDataset
+from ..augmentations import AcousticAugmentation, SpecAugmentation, AugmentationPipeline
+
 
 class SSLBirdSongDataset(BaseSpectrogramDataset):
     """
-    Base SSL dataset producing dual augmented views (x1, x2) 
+    Base SSL dataset producing dual augmented views (x1, x2)
     from the SAME WindowIndex entry.
     """
-    def __init__(self, 
-                 df: pd.DataFrame, 
-                 segment_size: int, 
-                 min_db: float, 
-                 max_db: float,
-                 acoustic_aug_config: dict = None, 
-                 **kwargs):
-        super().__init__(df=df, segment_size=segment_size, min_db=min_db, max_db=max_db, **kwargs)
-        self.acoustic_aug_config = acoustic_aug_config or {"enabled": True, "noise_level": 0.05}
-
-    def _apply_acoustic_augmentations(self, mel_tensor: torch.Tensor) -> torch.Tensor:
-        if self.acoustic_aug_config.get("noise_level", 0) > 0:
-            noise = torch.randn_like(mel_tensor) * self.acoustic_aug_config["noise_level"]
-            mel_tensor = torch.clamp(mel_tensor + noise, 0.0, 1.0)
-        return mel_tensor
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        segment_size: int,
+        min_db: float,
+        max_db: float,
+        acoustic_aug_config: dict = None,
+        spec_aug_config: dict = None,
+        **kwargs,
+    ):
+        super().__init__(
+            df=df,
+            segment_size=segment_size,
+            min_db=min_db,
+            max_db=max_db,
+            **kwargs,
+        )
+        
+        # Initialize augmentation pipeline
+        self.aug_pipeline = AugmentationPipeline()
+        
+        # Add acoustic augmentations
+        acoustic_cfg = acoustic_aug_config or {"enabled": True, "noise_level": 0.05}
+        self.aug_pipeline.add(
+            AcousticAugmentation(
+                enabled=acoustic_cfg.get("enabled", True),
+                noise_level=acoustic_cfg.get("noise_level", 0.05),
+                noise_prob=acoustic_cfg.get("noise_prob", 1.0),
+            )
+        )
+        
+        # Add spectrogram augmentations
+        spec_cfg = spec_aug_config or {"enabled": True}
+        self.aug_pipeline.add(
+            SpecAugmentation(
+                enabled=spec_cfg.get("enabled", False),
+                prob=spec_cfg.get("prob", 0.5),
+                num_freq_masks=spec_cfg.get("num_freq_masks", 2),
+                freq_mask_param=spec_cfg.get("freq_mask_param", 6),
+                num_time_masks=spec_cfg.get("num_time_masks", 2),
+                time_mask_param=spec_cfg.get("time_mask_param", 10),
+            )
+        )
 
     def _generate_view(self, window) -> torch.Tensor:
+        """Generate a single augmented view from a window."""
         view = self._extract_window_tensor(window)
-        if self.train and self.acoustic_aug_config.get("enabled", True):
-            view = self._apply_acoustic_augmentations(view)
-        view = self._apply_spec_augment(view.clone())
+        if self.train:
+            view = self.aug_pipeline(view)
         return view
 
     def __getitem__(self, idx: int):

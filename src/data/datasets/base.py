@@ -12,6 +12,7 @@ from ..windowing import (
     BaseWindowStrategy,
     WindowIndex,
 )
+from ..augmentations import SpecAugmentation
 
 
 class BaseSpectrogramDataset(Dataset):
@@ -40,9 +41,16 @@ class BaseSpectrogramDataset(Dataset):
         self.train = train
         self.epoch = 0
 
-        self.spec_aug_config = spec_aug_config or {
-            "enabled": False
-        }
+        # Initialize spec augmentation
+        spec_cfg = spec_aug_config or {"enabled": False}
+        self.spec_aug = SpecAugmentation(
+            enabled=spec_cfg.get("enabled", False),
+            prob=spec_cfg.get("prob", 0.5),
+            num_freq_masks=spec_cfg.get("num_freq_masks", 1),
+            freq_mask_param=spec_cfg.get("freq_mask_param", 0),
+            num_time_masks=spec_cfg.get("num_time_masks", 1),
+            time_mask_param=spec_cfg.get("time_mask_param", 0),
+        )
 
         self.window_strategy: BaseWindowStrategy = (
             build_window_strategy(window_config)
@@ -160,60 +168,7 @@ class BaseSpectrogramDataset(Dataset):
         self,
         mel_tensor: torch.Tensor,
     ) -> torch.Tensor:
-
-        cfg = self.spec_aug_config
-
-        if not (
-            self.train
-            and cfg.get("enabled", False)
-            and random.random() < cfg.get("prob", 0.5)
-        ):
-            return mel_tensor
-
-        _, n_mels, n_frames = mel_tensor.shape
-
-        for _ in range(
-            cfg.get("num_freq_masks", 1)
-        ):
-
-            f = random.randint(
-                0,
-                cfg.get("freq_mask_param", 0),
-            )
-
-            if f > 0:
-
-                f0 = random.randint(
-                    0,
-                    n_mels - f,
-                )
-
-                mel_tensor[
-                    :,
-                    f0:f0 + f,
-                    :
-                ] = 0.0
-
-        for _ in range(
-            cfg.get("num_time_masks", 1)
-        ):
-
-            t = random.randint(
-                0,
-                cfg.get("time_mask_param", 0),
-            )
-
-            if t > 0:
-
-                t0 = random.randint(
-                    0,
-                    n_frames - t,
-                )
-
-                mel_tensor[
-                    :,
-                    :,
-                    t0:t0 + t
-                ] = 0.0
-
+        """Apply spec augmentation (delegates to SpecAugmentation instance)."""
+        if self.train:
+            return self.spec_aug(mel_tensor)
         return mel_tensor
