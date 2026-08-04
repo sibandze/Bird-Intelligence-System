@@ -1,4 +1,4 @@
-# src/training/experiment_train.py
+# src/training/supervised_experiment_train.py
 
 import subprocess
 import time
@@ -13,7 +13,7 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.data.datasets import SupervisedBirdSongDataset  # Updated import
+from src.data.datasets import SupervisedBirdSongDataset
 from src.evaluation.metrics_collector import MetricsCollector
 from src.models.bird_classifier import BirdClassifier
 from src.training.precision import PrecisionManager
@@ -25,8 +25,9 @@ from src.training.callbacks import (
 )
 
 
-class ExperimentTrainer:
-    """Fully modular, callback-driven training engine."""
+class SupervisedExperimentTrainer:
+    """Supervised learning training engine with callback-driven architecture."""
+    
     def __init__(self, config: Dict[str, Any], run_dir: Path, callbacks: Optional[List[Callback]] = None):
         self.config = config
         self.run_dir = Path(run_dir)
@@ -41,9 +42,9 @@ class ExperimentTrainer:
 
         self.best_val_acc = 0.0
         self.best_epoch = 0
-        self.stop_training = False  # Controlled via request_stop()
+        self.stop_training = False
 
-        # 8. Note: Callback order matters! EarlyStopping and Checkpoint come before Loggers.
+        # Callback order matters! EarlyStopping and Checkpoint come before Loggers
         if callbacks is None:
             callbacks = [
                 CheckpointCallback(self.run_dir, monitor="val_acc", mode="max"),
@@ -54,17 +55,18 @@ class ExperimentTrainer:
             ]
         self.cb_runner = CallbackRunner(callbacks)
 
-        # 6. Store environment state
+        # Store environment state
         try:
             self.git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
         except Exception:
             self.git_hash = None
 
     def request_stop(self):
-        """5. Clean external API for callbacks to trigger early stopping."""
+        """Clean external API for callbacks to trigger early stopping."""
         self.stop_training = True
 
     def get_dataloaders(self, df: pd.DataFrame) -> Tuple[DataLoader, DataLoader, Dict[str, int], Dict[int, str]]:
+        """Create supervised dataloaders with proper windowing strategies."""
         batch_size = self.config['training']['batch_size']
         num_workers = self.config['training']['num_workers']
         segment_size = (self.config['audio']['sr'] * self.config['audio']['segment_seconds']) // self.config['audio']['hop_length']
@@ -83,7 +85,7 @@ class ExperimentTrainer:
             spec_aug_config=self._get_augmentation_config(),
             min_db=self.config['audio']['min_db'],
             max_db=self.config['audio']['max_db'],
-            window_config=window_config,  # Pass window config
+            window_config=window_config,
         )
         test_dataset = SupervisedBirdSongDataset(
             df=test_df,
@@ -92,7 +94,7 @@ class ExperimentTrainer:
             label_to_idx=train_dataset.label_to_idx,
             min_db=self.config['audio']['min_db'],
             max_db=self.config['audio']['max_db'],
-            window_config={"strategy": "center"},  # Use center strategy for validation
+            window_config={"strategy": "center"},  # Center window for validation
         )
 
         train_loader = DataLoader(
@@ -106,6 +108,7 @@ class ExperimentTrainer:
         return train_loader, test_loader, train_dataset.label_to_idx, train_dataset.idx_to_label
 
     def _get_augmentation_config(self) -> Dict:
+        """Extract spec augmentation configuration."""
         aug_cfg = self.config.get('augmentation', {})
         return {
             'enabled': aug_cfg.get('enabled', True),
@@ -117,6 +120,7 @@ class ExperimentTrainer:
         }
 
     def train(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Run supervised training loop."""
         train_loader, test_loader, label_to_idx, idx_to_label = self.get_dataloaders(df)
         class_names = [idx_to_label[i] for i in range(len(idx_to_label))]
 
@@ -135,23 +139,22 @@ class ExperimentTrainer:
             time_steps=segment_size,
         ).to(self.device)
 
-        # 7. Print Model and Environment Summary once
+        # Print Model and Environment Summary
         num_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         compiled = self.config["training"].get("compile_model", False)
 
-        print(f"\n>>> Initializing Training Run:")
+        print(f"\n>>> Initializing Supervised Training Run:")
         print(f"    Device:    {self.device}")
         print(f"    Precision: {self.precision.precision_name()}")
         print(f"    Compiled:  {compiled}")
         print(f"    Params:    {num_params:,} (Trainable: {trainable_params:,})")
+        print(f"    Classes:   {len(class_names)}")
+        print(f"    Train samples: {len(train_loader.dataset)}")
+        print(f"    Test samples:  {len(test_loader.dataset)}")
 
         if compiled:
             self.model = torch.compile(self.model)
-            # TODO:
-            # Benchmark torch.compile() separately.
-            # Compilation introduces startup overhead and is beneficial
-            # primarily for long training runs.
 
         criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.AdamW(
@@ -185,11 +188,11 @@ class ExperimentTrainer:
             if checkpoint.get("precision_state_dict"):
                 self.precision.load_state_dict(checkpoint["precision_state_dict"])
 
-            # 4. Restore Callback States
             if "callbacks_state_dict" in checkpoint:
                 self.cb_runner.load_state_dict(checkpoint["callbacks_state_dict"])
 
-            if "torch_rng_state" in checkpoint: torch.set_rng_state(checkpoint["torch_rng_state"])
+            if "torch_rng_state" in checkpoint: 
+                torch.set_rng_state(checkpoint["torch_rng_state"])
             if checkpoint.get("cuda_rng_state") and torch.cuda.is_available():
                 torch.cuda.set_rng_state_all(checkpoint["cuda_rng_state"])
 
@@ -203,7 +206,7 @@ class ExperimentTrainer:
             if self.stop_training:
                 break
 
-            # Set epoch for datasets to update window indices
+            # Update window indices for sliding window strategy
             train_loader.dataset.set_epoch(epoch)
 
             self.cb_runner.on_epoch_begin(self, epoch)
@@ -214,7 +217,6 @@ class ExperimentTrainer:
             train_loss, train_correct, train_total, epoch_grad_norm, num_batches = 0.0, 0, 0, 0.0, 0
 
             for batch_idx, (mel_segments, labels) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]", leave=False)):
-                # 2. Fire on_batch_begin Hook
                 batch_start_logs = {"batch": batch_idx}
                 self.cb_runner.on_batch_begin(self, batch_idx, batch_start_logs)
 
@@ -247,7 +249,6 @@ class ExperimentTrainer:
                 train_correct += (preds == labels).sum().item()
                 train_total += labels.size(0)
 
-                # 3. Fire on_batch_end Hook
                 batch_end_logs = {
                     "loss": batch_loss,
                     "grad_norm": batch_norm,
@@ -256,7 +257,6 @@ class ExperimentTrainer:
                 self.cb_runner.on_batch_end(self, batch_idx, batch_end_logs)
 
             # --- Validation Phase ---
-            # 9. Trigger on_validation_begin Hook
             self.cb_runner.on_validation_begin(self)
             self.model.eval()
             val_loss, val_correct, val_total = 0.0, 0, 0
@@ -276,7 +276,6 @@ class ExperimentTrainer:
             avg_val_loss = val_loss / val_total
             avg_val_acc = val_correct / val_total
 
-            # 9. Trigger on_validation_end Hook
             val_logs = {"val_loss": avg_val_loss, "val_acc": avg_val_acc}
             self.cb_runner.on_validation_end(self, val_logs)
 
@@ -302,7 +301,7 @@ class ExperimentTrainer:
                 "samples_per_sec": train_total / epoch_duration,
             }
 
-            # 10. Memory helper integration
+            # Memory usage logging
             logs.update(get_gpu_memory_info(self.device))
 
             print(f"Epoch {epoch+1}/{epochs} | {epoch_duration:.1f}s | "
@@ -322,6 +321,7 @@ class ExperimentTrainer:
         return metrics
 
     def _evaluate(self, model: nn.Module, test_loader: DataLoader, class_names: list) -> Dict:
+        """Run evaluation on best model checkpoint."""
         model.eval()
         collector = MetricsCollector(self.run_dir, class_names)
         with torch.no_grad():
