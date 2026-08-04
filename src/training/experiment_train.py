@@ -3,7 +3,7 @@
 import subprocess
 import time
 from pathlib import Path
-from typing import Dict, Any, Tuple, List, Optional  # 1. Added Optional
+from typing import Dict, Any, Tuple, List, Optional
 
 import pandas as pd
 import torch
@@ -13,12 +13,12 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.data.dataset import BirdSongDataset
+from src.data.datasets import SupervisedBirdSongDataset  # Updated import
 from src.evaluation.metrics_collector import MetricsCollector
 from src.models.bird_classifier import BirdClassifier
 from src.training.precision import PrecisionManager
 from src.training.scheduler import create_scheduler, get_scheduler_step_frequency
-from src.utils.memory_utils import get_gpu_memory_info, log_memory_usage  # 10. Memory helper import
+from src.utils.memory_utils import get_gpu_memory_info, log_memory_usage
 from src.training.callbacks import (
     Callback, CallbackRunner, CheckpointCallback, EarlyStoppingCallback,
     JSONLoggerCallback, CSVLoggerCallback, WandBLoggerCallback
@@ -31,18 +31,18 @@ class ExperimentTrainer:
         self.config = config
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(exist_ok=True, parents=True)
-        
+
         self.device = torch.device(config['training'].get('device', 'cuda') if torch.cuda.is_available() else 'cpu')
         self.precision = PrecisionManager(
             enabled=config["training"].get("mixed_precision", {}).get("enabled", True),
             device=self.device.type,
             use_bfloat16=config["training"].get("mixed_precision", {}).get("use_bfloat16", False),
         )
-        
+
         self.best_val_acc = 0.0
         self.best_epoch = 0
         self.stop_training = False  # Controlled via request_stop()
-        
+
         # 8. Note: Callback order matters! EarlyStopping and Checkpoint come before Loggers.
         if callbacks is None:
             callbacks = [
@@ -68,22 +68,33 @@ class ExperimentTrainer:
         batch_size = self.config['training']['batch_size']
         num_workers = self.config['training']['num_workers']
         segment_size = (self.config['audio']['sr'] * self.config['audio']['segment_seconds']) // self.config['audio']['hop_length']
-        
+
         train_df, test_df = train_test_split(
             df, test_size=0.2, random_state=42, stratify=df['scientific_name_id']
         )
-        
-        train_dataset = BirdSongDataset(
-            df=train_df, segment_size=segment_size, train=True,
+
+        # Get windowing config from training config
+        window_config = self.config.get('windowing', {"strategy": "sliding", "stride": 256})
+
+        train_dataset = SupervisedBirdSongDataset(
+            df=train_df,
+            segment_size=segment_size,
+            train=True,
             spec_aug_config=self._get_augmentation_config(),
-            min_db=self.config['audio']['min_db'], max_db=self.config['audio']['max_db']
+            min_db=self.config['audio']['min_db'],
+            max_db=self.config['audio']['max_db'],
+            window_config=window_config,  # Pass window config
         )
-        test_dataset = BirdSongDataset(
-            df=test_df, segment_size=segment_size, train=False,
+        test_dataset = SupervisedBirdSongDataset(
+            df=test_df,
+            segment_size=segment_size,
+            train=False,
             label_to_idx=train_dataset.label_to_idx,
-            min_db=self.config['audio']['min_db'], max_db=self.config['audio']['max_db']
+            min_db=self.config['audio']['min_db'],
+            max_db=self.config['audio']['max_db'],
+            window_config={"strategy": "center"},  # Use center strategy for validation
         )
-        
+
         train_loader = DataLoader(
             train_dataset, batch_size=batch_size, shuffle=True,
             num_workers=num_workers, pin_memory=(self.device.type == "cuda"), persistent_workers=num_workers > 0
@@ -97,15 +108,18 @@ class ExperimentTrainer:
     def _get_augmentation_config(self) -> Dict:
         aug_cfg = self.config.get('augmentation', {})
         return {
-            'enabled': aug_cfg.get('enabled', True), 'prob': aug_cfg.get('prob', 0.5),
-            'num_freq_masks': aug_cfg.get('num_freq_masks', 2), 'freq_mask_param': aug_cfg.get('freq_mask_param', 6),
-            'num_time_masks': aug_cfg.get('num_time_masks', 2), 'time_mask_param': aug_cfg.get('time_mask_param', 10),
+            'enabled': aug_cfg.get('enabled', True),
+            'prob': aug_cfg.get('prob', 0.5),
+            'num_freq_masks': aug_cfg.get('num_freq_masks', 2),
+            'freq_mask_param': aug_cfg.get('freq_mask_param', 6),
+            'num_time_masks': aug_cfg.get('num_time_masks', 2),
+            'time_mask_param': aug_cfg.get('time_mask_param', 10),
         }
 
     def train(self, df: pd.DataFrame) -> Dict[str, Any]:
         train_loader, test_loader, label_to_idx, idx_to_label = self.get_dataloaders(df)
         class_names = [idx_to_label[i] for i in range(len(idx_to_label))]
-        
+
         segment_size = (self.config['audio']['sr'] * self.config['audio']['segment_seconds']) // self.config['audio']['hop_length']
 
         # Initialize Model
@@ -138,7 +152,7 @@ class ExperimentTrainer:
             # Benchmark torch.compile() separately.
             # Compilation introduces startup overhead and is beneficial
             # primarily for long training runs.
-        
+
         criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.AdamW(
             self.model.parameters(),
@@ -149,7 +163,7 @@ class ExperimentTrainer:
         epochs = self.config['training']['epochs']
         scheduler_type = self.config['training'].get('scheduler_type', 'cosine')
         warmup_steps = self.config['training'].get('warmup_steps', 0)
-        
+
         self.scheduler = create_scheduler(
             optimizer=self.optimizer, scheduler_type=scheduler_type,
             warmup_steps=warmup_steps, total_steps=len(train_loader) * epochs,
@@ -163,22 +177,22 @@ class ExperimentTrainer:
         if checkpoint_path.exists():
             print(f"    ↻ Found existing checkpoint. Resuming from {checkpoint_path.name}")
             checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-            
+
             self.model.load_state_dict(checkpoint["model_state_dict"])
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             if self.scheduler and checkpoint.get("scheduler_state_dict"):
                 self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
             if checkpoint.get("precision_state_dict"):
                 self.precision.load_state_dict(checkpoint["precision_state_dict"])
-            
+
             # 4. Restore Callback States
             if "callbacks_state_dict" in checkpoint:
                 self.cb_runner.load_state_dict(checkpoint["callbacks_state_dict"])
-                
+
             if "torch_rng_state" in checkpoint: torch.set_rng_state(checkpoint["torch_rng_state"])
             if checkpoint.get("cuda_rng_state") and torch.cuda.is_available():
                 torch.cuda.set_rng_state_all(checkpoint["cuda_rng_state"])
-                
+
             resume_epoch = checkpoint["epoch"]
             print(f"    ✓ Resumed successfully from epoch {resume_epoch + 1}")
 
@@ -188,7 +202,10 @@ class ExperimentTrainer:
         for epoch in range(resume_epoch, epochs):
             if self.stop_training:
                 break
-                
+
+            # Set epoch for datasets to update window indices
+            train_loader.dataset.set_epoch(epoch)
+
             self.cb_runner.on_epoch_begin(self, epoch)
             epoch_start_time = time.time()
 
@@ -210,7 +227,7 @@ class ExperimentTrainer:
 
                 self.precision.scale_loss(loss).backward()
                 self.precision.unscale_gradients(self.optimizer)
-                
+
                 grad_clip = self.config["training"].get("gradient_clip")
                 batch_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), max_norm=grad_clip if grad_clip is not None else float('inf')
@@ -243,7 +260,7 @@ class ExperimentTrainer:
             self.cb_runner.on_validation_begin(self)
             self.model.eval()
             val_loss, val_correct, val_total = 0.0, 0, 0
-            
+
             with torch.no_grad():
                 for mel_segments, labels in tqdm(test_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]", leave=False):
                     mel_segments, labels = mel_segments.to(self.device), labels.to(self.device)
@@ -284,7 +301,7 @@ class ExperimentTrainer:
                 "epoch_time_sec": epoch_duration,
                 "samples_per_sec": train_total / epoch_duration,
             }
-            
+
             # 10. Memory helper integration
             logs.update(get_gpu_memory_info(self.device))
 
@@ -315,7 +332,7 @@ class ExperimentTrainer:
                     probs = torch.softmax(logits, dim=1)
                     preds = torch.argmax(logits, dim=1)
                 collector.add_batch(preds.cpu().numpy(), labels.numpy(), probs.cpu().numpy())
-        
+
         metrics = collector.compute_metrics()
         collector.save_metrics_json()
         collector.plot_confusion_matrix()
