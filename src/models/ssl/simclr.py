@@ -11,18 +11,18 @@ from src.models.heads import ProjectionHead
 class SimCLR(nn.Module):
     """
     SimCLR: A Simple Framework for Contrastive Learning of Visual Representations.
-
+    
     Adapted for audio spectrograms.
     Uses InfoNCE (NT-Xent) loss: normalized temperature-scaled cross entropy.
-
+    
     Architecture:
         x → Encoder f → h → Projection g → z → L2 normalize → NT-Xent loss
-
+    
     The loss maximizes agreement between differently augmented views 
     of the same sample while minimizing agreement with all other samples 
     in the batch.
     """
-
+    
     def __init__(
         self,
         encoder: nn.Module = None,
@@ -40,10 +40,10 @@ class SimCLR(nn.Module):
             **encoder_kwargs: Arguments for CNNEncoder if encoder is None
         """
         super().__init__()
-
+        
         if encoder is None:
             encoder = CNNEncoder(**encoder_kwargs)
-
+        
         if projection is None:
             encoder_dim = encoder.get_output_dim() if hasattr(encoder, 'get_output_dim') else encoder_kwargs.get('embed_dim', 512)
             projection = ProjectionHead(
@@ -51,26 +51,26 @@ class SimCLR(nn.Module):
                 hidden_dim=256,
                 output_dim=128,
             )
-
+        
         self.encoder = encoder
         self.projection = projection
         self.temperature = temperature
-
+    
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass returning normalized projected embeddings.
-
+        
         Args:
             x: Input spectrograms [B, 1, n_mels, time]
-
+            
         Returns:
             z: L2-normalized projected embeddings [B, proj_dim]
         """
         h = self.encoder(x)
         z = self.projection(h)
-        z = F.normalize(z, dim=1)  # L2 normalize to unit hypersphere
+        z = F.normalize(z, dim=1, p=2)  # L2 normalize to unit hypersphere
         return z
-
+    
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         """
         Get encoder embeddings only (without projection).
@@ -88,7 +88,7 @@ class SimCLR(nn.Module):
         """
         NT-Xent (Normalized Temperature-scaled Cross Entropy) Loss.
         
-        Also known as InfoNCE with 2 views.
+        Efficient single-pass implementation using cross_entropy.
         
         For each positive pair (z1[i], z2[i]), the loss is:
             ℓ(i,j) = -log( exp(sim(z_i, z_j) / τ) / Σ_{k≠i} exp(sim(z_i, z_k) / τ) )
@@ -96,8 +96,8 @@ class SimCLR(nn.Module):
         where sim(u,v) = u^T v (cosine similarity since vectors are normalized)
         
         Args:
-            z1: First view projections [B, proj_dim] (already normalized)
-            z2: Second view projections [B, proj_dim] (already normalized)
+            z1: First view projections [B, proj_dim] (should be normalized)
+            z2: Second view projections [B, proj_dim] (should be normalized)
         
         Returns:
             loss: Scalar loss averaged over all 2B samples
@@ -109,7 +109,6 @@ class SimCLR(nn.Module):
         z = torch.cat([z1, z2], dim=0)  # [2B, proj_dim]
         
         # Compute similarity matrix: S[i][j] = z_i^T z_j / τ
-        # Since z is normalized, this is cosine similarity / τ
         sim_matrix = torch.matmul(z, z.T) / self.temperature  # [2B, 2B]
         
         # Mask to remove self-similarity (diagonal)
@@ -118,51 +117,56 @@ class SimCLR(nn.Module):
         sim_matrix.masked_fill_(self_mask, float('-inf'))
         
         # Create labels for positive pairs
-        # For view1[i], positive is view2[i] (index i+B)
-        # For view2[i], positive is view1[i] (index i)
+        # For view1[i], positive is view2[i] (index i+B in concatenated tensor)
+        # For view2[i], positive is view1[i] (index i in concatenated tensor)
         positive_indices = torch.cat([
             torch.arange(B, 2 * B, device=device),  # view1 positives: i+B
             torch.arange(0, B, device=device),        # view2 positives: i
         ])
         
         # Cross-entropy with softmax over all 2B-1 negatives
-        # ℓ(i) = -log( exp(sim(z_i, z_pos) / τ) / Σ_{k≠i} exp(sim(z_i, z_k) / τ) )
         loss = F.cross_entropy(sim_matrix, positive_indices)
         
         return loss
     
     def info_nce_loss(self, z1: torch.Tensor, z2: torch.Tensor) -> torch.Tensor:
         """
-        Alternative InfoNCE implementation (equivalent to nt_xent_loss).
+        InfoNCE loss implementation (symmetric version).
         
-        Explicitly computes:
-            ℒ = -𝔼[log( f(z1, z2) / (f(z1, z2) + Σ f(z1, z_neg)) )]
+        Explicitly computes the loss for both views separately 
+        for comparison and debugging purposes.
         
-        where f(u,v) = exp(sim(u,v) / τ)
+        Returns same result as nt_xent_loss but is more explicit.
         """
         B = z1.shape[0]
+        device = z1.device
         
-        # Positive pair similarities
+        # Positive pair similarities (z1[i] · z2[i])
         pos_sim = torch.sum(z1 * z2, dim=1) / self.temperature  # [B]
         
-        # All-pair similarities (B x 2B)
-        z_all = torch.cat([z1, z2], dim=0)  # [2B, dim]
-        sim_all = torch.matmul(z1, z_all.T) / self.temperature  # [B, 2B]
+        # Concatenate all embeddings
+        z_all = torch.cat([z1, z2], dim=0)  # [2B, proj_dim]
         
-        # Mask out self (z1[i] vs z1[i])
-        mask = torch.eye(B, 2*B, dtype=torch.bool, device=z1.device)
-        sim_all.masked_fill_(mask, float('-inf'))
+        # Loss for view1 → view2
+        # Compute z1[i] · z_all[j] for all i, j
+        sim_1 = torch.matmul(z1, z_all.T) / self.temperature  # [B, 2B]
         
-        # InfoNCE loss for view1→view2
-        loss_1 = -pos_sim + torch.logsumexp(sim_all, dim=1)  # [B]
+        # Mask self-similarity: z1[i] vs z1[i]
+        mask_1 = torch.zeros(B, 2 * B, dtype=torch.bool, device=device)
+        mask_1[:, :B] = torch.eye(B, dtype=torch.bool, device=device)  # Mask diagonal in left block
+        sim_1.masked_fill_(mask_1, float('-inf'))
         
-        # InfoNCE loss for view2→view1 (symmetric)
-        sim_all_2 = torch.matmul(z2, z_all.T) / self.temperature  # [B, 2B]
-        mask_2 = torch.eye(B, 2*B, dtype=torch.bool, device=z1.device)
-        mask_2[:, B:] = True  # Mask z2[i] vs z2[i]
-        sim_all_2.masked_fill_(mask_2, float('-inf'))
+        loss_1 = -pos_sim + torch.logsumexp(sim_1, dim=1)  # [B]
         
-        loss_2 = -pos_sim + torch.logsumexp(sim_all_2, dim=1)  # [B]
+        # Loss for view2 → view1
+        sim_2 = torch.matmul(z2, z_all.T) / self.temperature  # [B, 2B]
+        
+        # Mask self-similarity: z2[i] vs z2[i] (in right block, shifted by B)
+        mask_2 = torch.zeros(B, 2 * B, dtype=torch.bool, device=device)
+        mask_2[:, B:] = torch.eye(B, dtype=torch.bool, device=device)  # Mask diagonal in right block
+        sim_2.masked_fill_(mask_2, float('-inf'))
+        
+        loss_2 = -pos_sim + torch.logsumexp(sim_2, dim=1)  # [B]
         
         # Average over both views and batch
         loss = (loss_1.mean() + loss_2.mean()) / 2
@@ -201,31 +205,35 @@ class SimCLR(nn.Module):
         
         For each view, checks if the most similar embedding 
         is the corresponding positive pair.
+        
+        Returns fraction of correctly identified positive pairs.
         """
         B = z1.shape[0]
         
         # Concatenate all embeddings
         z = torch.cat([z1, z2], dim=0)  # [2B, proj_dim]
         
-        # Cosine similarity matrix
+        # Cosine similarity matrix (already normalized, so dot product = cosine sim)
         sim = torch.matmul(z1, z.T)  # [B, 2B]
         
-        # Mask out self
-        mask = torch.eye(B, 2*B, dtype=torch.bool, device=z1.device)
+        # Mask out self (z1[i] vs z1[i])
+        mask = torch.zeros(B, 2 * B, dtype=torch.bool, device=z1.device)
+        mask[:, :B] = torch.eye(B, dtype=torch.bool, device=z1.device)
         sim.masked_fill_(mask, float('-inf'))
         
         # For view1[i], positive is at index i+B
         _, predicted = sim.max(dim=1)  # [B]
-        correct = (predicted == torch.arange(B, 2*B, device=z1.device)).float()
+        correct = (predicted == torch.arange(B, 2 * B, device=z1.device)).float()
         
         return correct.mean()
 
 
-def nt_xent_loss_explicit(z1, z2, temperature=0.07):
+def nt_xent_loss_standalone(z1, z2, temperature=0.07):
     """
     Standalone NT-Xent loss function for external use.
     
     This can be used with any framework, not just SimCLR class.
+    Uses numerical stability tricks.
     
     Args:
         z1: First view projections [B, D]
@@ -238,9 +246,9 @@ def nt_xent_loss_explicit(z1, z2, temperature=0.07):
     B, D = z1.shape
     device = z1.device
     
-    # Normalize
-    z1 = F.normalize(z1, dim=1)
-    z2 = F.normalize(z2, dim=1)
+    # Ensure normalization
+    z1 = F.normalize(z1, dim=1, p=2)
+    z2 = F.normalize(z2, dim=1, p=2)
     
     # Concatenate
     z = torch.cat([z1, z2], dim=0)  # [2B, D]
@@ -248,14 +256,16 @@ def nt_xent_loss_explicit(z1, z2, temperature=0.07):
     # Cosine similarity / temperature
     sim = torch.mm(z, z.t()) / temperature  # [2B, 2B]
     
-    # Positive pairs: (i, i+B) and (i+B, i)
+    # Extract positive similarities
+    # z1[i] vs z2[i] → diagonal offset by B
+    # z2[i] vs z1[i] → diagonal offset by -B
     pos_sim = torch.cat([
-        torch.diag(sim, B),   # z1[i] vs z2[i]
-        torch.diag(sim, -B),  # z2[i] vs z1[i]
+        torch.diag(sim, B),    # z1[i] vs z2[i]
+        torch.diag(sim, -B),   # z2[i] vs z1[i]
     ])  # [2B]
     
     # Remove self-similarities for softmax denominator
-    sim = sim - torch.eye(2*B, device=device) * 1e9
+    sim = sim - torch.eye(2 * B, device=device) * 1e9
     
     # NT-Xent: -log( exp(pos/τ) / Σ exp(all/τ) )
     loss = -pos_sim + torch.logsumexp(sim, dim=1)  # [2B]
