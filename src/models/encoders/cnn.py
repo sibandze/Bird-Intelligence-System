@@ -10,13 +10,15 @@ class CNNEncoder(nn.Module):
     CNN encoder for spectrogram inputs.
     
     Takes mel spectrograms of shape [B, 1, n_mels, time] 
-    and produces flattened embeddings of shape [B, embed_dim].
+    and produces embeddings in multiple formats:
+    
+    - forward(): Pooled 1D embedding [B, embed_dim] (for classification/SSL)
+    - forward_features(): Full spatial-temporal feature map [B, C, H, W]
+    - forward_sequence(): Temporal token sequence [B, S, D] (for transformers)
     
     Architecture:
         4 convolutional blocks with increasing channels
-        → Global average pooling over frequency dimension
-        → Adaptive pooling over time dimension
-        → Flatten to embedding
+        → Multiple output pathways
     """
     
     def __init__(
@@ -29,7 +31,7 @@ class CNNEncoder(nn.Module):
         """
         Args:
             n_mels: Number of mel frequency bins in input
-            embed_dim: Output embedding dimension
+            embed_dim: Output embedding dimension for pooled forward()
             base_channels: Base number of channels (doubled each block)
             dropout: Dropout rate after conv blocks
         """
@@ -82,15 +84,15 @@ class CNNEncoder(nn.Module):
             nn.MaxPool2d(kernel_size=(2, 2)),
         )
         
-        # Global average pooling over frequency
+        # Global average pooling over frequency for sequence/forward
         self.freq_pool = nn.AdaptiveAvgPool2d((1, None))
         
-        # Adaptive pooling over time to fixed size
+        # Adaptive pooling over time to fixed size for forward()
         self.time_pool = nn.AdaptiveAvgPool2d((1, 8))
         
         self.dropout = nn.Dropout(dropout)
         
-        # Project to embedding dimension
+        # Project to embedding dimension for forward()
         # After pooling: base_channels*8 * 8 time steps = 512*8 = 4096
         self.embed = nn.Sequential(
             nn.Linear(base_channels * 8 * 8, embed_dim),
@@ -112,9 +114,49 @@ class CNNEncoder(nn.Module):
                 nn.init.kaiming_normal_(m.weight)
                 nn.init.constant_(m.bias, 0)
     
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Returns the raw spatial-temporal CNN feature map.
+        
+        Args:
+            x: Mel spectrogram [B, 1, n_mels, time_steps]
+            
+        Returns:
+            Feature map [B, base_channels*8, n_mels/16, time_steps/16]
+            Typically [B, 512, 8, T/16]
+        """
+        x = self.conv1(x)   # [B, 64, 64, T/2]
+        x = self.conv2(x)   # [B, 128, 32, T/4]
+        x = self.conv3(x)   # [B, 256, 16, T/8]
+        x = self.conv4(x)   # [B, 512, 8, T/16]
+        return x
+    
+    def forward_sequence(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Returns temporal token sequence for transformer models.
+        
+        Pools frequency dimension to 1, then creates a sequence
+        of temporal tokens.
+        
+        Args:
+            x: Mel spectrogram [B, 1, n_mels, time_steps]
+            
+        Returns:
+            Token sequence [B, S, D] where:
+                S = time_steps / 16
+                D = base_channels * 8 = 512
+        """
+        x = self.forward_features(x)       # [B, 512, 8, T/16]
+        x = self.freq_pool(x)              # [B, 512, 1, T/16]
+        x = x.squeeze(2)                   # [B, 512, T/16]
+        return x.transpose(1, 2)           # [B, T/16, 512]
+    
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass.
+        Standard pooled forward pass returning 1D embedding.
+        
+        Pools both frequency and time dimensions to fixed size,
+        then projects to embed_dim.
         
         Args:
             x: Mel spectrogram [B, 1, n_mels, time_steps]
@@ -122,27 +164,21 @@ class CNNEncoder(nn.Module):
         Returns:
             h: Embedding [B, embed_dim]
         """
-        # Conv blocks
-        x = self.conv1(x)   # [B, 64, 64, T/2]
-        x = self.conv2(x)   # [B, 128, 32, T/4]
-        x = self.conv3(x)   # [B, 256, 16, T/8]
-        x = self.conv4(x)   # [B, 512, 8, T/16]
-        
-        # Pool frequency to 1
-        x = self.freq_pool(x)   # [B, 512, 1, T/16]
-        
-        # Pool time to fixed size
-        x = self.time_pool(x)   # [B, 512, 1, 8]
-        
-        # Flatten
-        x = x.view(x.size(0), -1)   # [B, 4096]
-        
-        # Dropout and project
+        x = self.forward_features(x)       # [B, 512, 8, T/16]
+        x = self.freq_pool(x)              # [B, 512, 1, T/16]
+        x = self.time_pool(x)              # [B, 512, 1, 8]
+        x = x.view(x.size(0), -1)          # [B, 4096]
         x = self.dropout(x)
-        h = self.embed(x)   # [B, embed_dim]
-        
-        return h
+        return self.embed(x)               # [B, embed_dim]
     
     def get_output_dim(self) -> int:
-        """Return the output embedding dimension."""
+        """Return the output embedding dimension for forward()."""
         return self.embed_dim
+    
+    def get_feature_dim(self) -> int:
+        """Return the feature map channel dimension."""
+        return self.conv4[-3].num_features  # 512 for default
+    
+    def get_sequence_dim(self) -> int:
+        """Return the sequence token dimension."""
+        return self.conv4[-3].num_features  # 512 for default
