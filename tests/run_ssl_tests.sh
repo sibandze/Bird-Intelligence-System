@@ -16,6 +16,9 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="${PROJECT_ROOT}/tests"
 COVERAGE_THRESHOLD=80
 
+# Ensure project root is on PYTHONPATH so `import src` works
+export PYTHONPATH="${PROJECT_ROOT}:$PYTHONPATH"
+
 # Parse arguments
 VERBOSE=false
 COVERAGE=false
@@ -173,7 +176,7 @@ run_phase1() {
         "${TEST_DIR}/test_supervised_equivalence.py::TestSupervisedSSLEquivalence"
 }
 
-if [[ -n "$SPECIFIC_TEST" ]] && [[ "$SPECIFIC_TEST" != *"phase1"* ]] && [[ "$SPECIFIC_TEST" != *"data"* ]]; then
+if [[ -n "$SPECIFIC_TEST" ]] && [[ "$SPECIFIC_TEST" != *"phase1" ]] && [[ "$SPECIFIC_TEST" != *"data" ]]; then
     print_warning "Skipping Phase 1 (not matching filter: $SPECIFIC_TEST)"
 else
     run_phase1
@@ -200,7 +203,7 @@ run_phase2() {
     pytest ${PYTEST_ARGS} "${TEST_DIR}/test_ssl_models.py::TestProjectionHead"
 }
 
-if [[ -n "$SPECIFIC_TEST" ]] && [[ "$SPECIFIC_TEST" != *"phase2"* ]] && [[ "$SPECIFIC_TEST" != *"encoder"* ]] && [[ "$SPECIFIC_TEST" != *"projection"* ]]; then
+if [[ -n "$SPECIFIC_TEST" ]] && [[ "$SPECIFIC_TEST" != *"phase2" ]] && [[ "$SPECIFIC_TEST" != *"encoder" ]] && [[ "$SPECIFIC_TEST" != *"projection" ]]; then
     print_warning "Skipping Phase 2 (not matching filter: $SPECIFIC_TEST)"
 else
     run_phase2
@@ -231,7 +234,7 @@ run_phase3() {
     pytest ${PYTEST_ARGS} "${TEST_DIR}/test_ssl_sanity.py"
 }
 
-if [[ -n "$SPECIFIC_TEST" ]] && [[ "$SPECIFIC_TEST" != *"phase3"* ]] && [[ "$SPECIFIC_TEST" != *"simclr"* ]] && [[ "$SPECIFIC_TEST" != *"loss"* ]]; then
+if [[ -n "$SPECIFIC_TEST" ]] && [[ "$SPECIFIC_TEST" != *"phase3" ]] && [[ "$SPECIFIC_TEST" != *"simclr" ]] && [[ "$SPECIFIC_TEST" != *"loss" ]]; then
     print_warning "Skipping Phase 3 (not matching filter: $SPECIFIC_TEST)"
 else
     run_phase3
