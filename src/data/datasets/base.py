@@ -102,6 +102,10 @@ class BaseSpectrogramDataset(Dataset):
         Update the epoch and rebuild temporal sampling.
 
         Training loops should call this once before each epoch.
+        
+        Note for DDP: Call dataset.set_epoch(epoch) alongside 
+        sampler.set_epoch(epoch) to keep window indices synchronized 
+        across distributed processes.
         """
 
         self.epoch = epoch
@@ -129,11 +133,13 @@ class BaseSpectrogramDataset(Dataset):
 
             pad = self.segment_size - T
 
+            # Preserve original dtype to avoid Float64/Float32 mismatches
             mel_crop = np.pad(
                 mel,
                 ((0, 0), (0, pad)),
                 mode="constant",
-            )
+                constant_values=0.0,
+            ).astype(mel.dtype, copy=False)
 
         else:
 
