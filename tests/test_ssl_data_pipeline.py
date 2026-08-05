@@ -86,7 +86,7 @@ def base_ssl_config():
 
 
 # ============================================================================
-# Phase 1.1: Augmentation Pipeline Tests
+# Augmentation Pipeline Tests
 # ============================================================================
 
 class TestBaseAugmentation:
@@ -311,7 +311,7 @@ class TestAugmentationPipeline:
 
 
 # ============================================================================
-# Phase 1.2: SSL Dataset Tests
+# SSL Dataset Tests
 # ============================================================================
 
 class TestSSLBirdSongDataset:
@@ -499,7 +499,7 @@ class TestSSLCollateFunctions:
 
 
 # ============================================================================
-# Phase 1.3: DataLoader Integration Tests
+# DataLoader Integration Tests
 # ============================================================================
 
 class TestDataLoaderIntegration:
@@ -541,7 +541,7 @@ class TestDataLoaderIntegration:
 
 
 # ============================================================================
-# Phase 1.4: Supervised Dataset Tests
+# Supervised Dataset Tests
 # ============================================================================
 
 class TestSupervisedDataset:
