@@ -10,6 +10,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from unittest.mock import Mock, patch
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.models.encoders import CNNEncoder
 from src.models.heads import ProjectionHead

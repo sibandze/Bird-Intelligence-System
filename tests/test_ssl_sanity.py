@@ -8,6 +8,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch.utils.data import DataLoader
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.models.ssl import SimCLR
 from src.data.datasets import SimCLRDataset, simclr_collate_fn

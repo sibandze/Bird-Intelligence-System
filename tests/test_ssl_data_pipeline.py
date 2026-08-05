@@ -12,6 +12,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 import tempfile
 import os
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data.augmentations import (
     BaseAugmentation,
