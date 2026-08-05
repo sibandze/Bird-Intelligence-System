@@ -78,12 +78,13 @@ class SimCLRDataset(SSLBirdSongDataset):
     pass
 
 def simclr_collate_fn(batch):
-    """Collates [(x1, x2), ...] into batch [2*B, 1, F, T]."""
+    """Collates [(x1, x2), ...] into separate tensors (view1 [B, 1, F, T], view2 [B, 1, F, T])."""
     view1_list, view2_list = zip(*batch)
-    view1 = torch.stack(view1_list, dim=0)  # [B, 1, F, T]
-    view2 = torch.stack(view2_list, dim=0)  # [B, 1, F, T]
-    return torch.cat([view1, view2], dim=0)
 
+    x1 = torch.stack(view1_list, dim=0)
+    x2 = torch.stack(view2_list, dim=0)
+
+    return x1, x2
 
 class BYOLDataset(SSLBirdSongDataset):
     """BYOL Specific Dataset Adapter."""
@@ -92,7 +93,11 @@ class BYOLDataset(SSLBirdSongDataset):
 def byol_collate_fn(batch):
     """Collates [(x1, x2), ...] into separate tensors (view1 [B, 1, F, T], view2 [B, 1, F, T])."""
     view1_list, view2_list = zip(*batch)
-    return torch.stack(view1_list, dim=0), torch.stack(view2_list, dim=0)
+
+    x1 = torch.stack(view1_list, dim=0)
+    x2 = torch.stack(view2_list, dim=0)
+
+    return x1, x2
 
 
 class MoCoDataset(SSLBirdSongDataset):
