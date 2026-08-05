@@ -65,21 +65,17 @@ class BaseSpectrogramDataset(Dataset):
     ) -> int:
         """
         Get total spectrogram frames for a recording.
-
-        Prefer metadata when available to avoid loading the entire
-        spectrogram just to determine its length.
+        
+        Uses pre-computed 'total_frames' column from metadata when available.
+        Falls back to loading spectrogram header for legacy data.
         """
-
-        if (
-            "total_frames" in row
-            and not pd.isna(row["total_frames"])
-        ):
+        # Fast path: use pre-computed frame count from metadata
+        if "total_frames" in row and not pd.isna(row["total_frames"]):
             return int(row["total_frames"])
-
-        mel = load_local_spectrogram(
-            row["local_spectrogram_path"]
-        )
-
+        
+        # Legacy fallback: load spectrogram to get shape
+        # This should rarely happen if pipeline properly computes total_frames
+        mel = load_local_spectrogram(row["local_spectrogram_path"])
         return mel.shape[1]
 
     def _rebuild_window_index(self):
