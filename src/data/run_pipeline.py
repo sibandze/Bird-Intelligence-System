@@ -3,11 +3,33 @@
 import os
 import time
 from pathlib import Path
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
 from .download import download_audio
 from .process_audio import preprocess_and_save
+
+
+def get_spectrogram_frames(npy_path: str) -> int:
+    """
+    Get total number of time frames from a saved spectrogram.
+    
+    Loads only the shape from the .npy file header without loading
+    the full array into memory when using mmap_mode='r'.
+    
+    Args:
+        npy_path: Path to .npy spectrogram file
+        
+    Returns:
+        Total number of time frames (T dimension)
+    """
+    try:
+        # Memory-map the file to read shape without loading full array
+        mel = np.load(npy_path, mmap_mode='r')
+        return mel.shape[1]  # T dimension: [n_mels, T]
+    except Exception:
+        return 0
 
 
 def run_data_pipeline(config, use_full_dataset: bool = False):
@@ -97,17 +119,25 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
 
         # Step A: Spectrogram cached check
         if local_npy_path.exists():
-            row_dict = row.to_dict()
-            row_dict["scientific_name_id"] = sci_to_id[row["scientific_name"]]
-            row_dict["spectrogram_filename"] = npy_filename
-            row_dict["local_spectrogram_path"] = str(local_npy_path)
-            processed_rows.append(row_dict)
+            # Get total frames from cached spectrogram
+            total_frames = get_spectrogram_frames(str(local_npy_path))
+            
+            if total_frames > 0:
+                row_dict = row.to_dict()
+                row_dict["scientific_name_id"] = sci_to_id[row["scientific_name"]]
+                row_dict["spectrogram_filename"] = npy_filename
+                row_dict["local_spectrogram_path"] = str(local_npy_path)
+                row_dict["total_frames"] = total_frames  # Store frame count
+                processed_rows.append(row_dict)
 
-            skipped_count += 1
-            pbar.set_postfix(
-                proc=processed_count, skip=skipped_count, fail=failed_count
-            )
-            continue
+                skipped_count += 1
+                pbar.set_postfix(
+                    proc=processed_count, skip=skipped_count, fail=failed_count
+                )
+            else:
+                tqdm.write(f"⚠️ Corrupted cached spectrogram for {xc_id}, reprocessing...")
+                # Fall through to reprocess
+                pass
 
         # Step B: Download audio if missing
         if not local_audio_path.exists():
@@ -123,20 +153,36 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
                 continue
 
         # Step C: Preprocess audio to NPY spectrogram
-        success = preprocess_and_save(
-            str(local_audio_path),
-            str(local_npy_path),
-            sr=audio_cfg["sr"],
-            n_fft=audio_cfg["n_fft"],
-            hop_length=audio_cfg["hop_length"],
-            n_mels=audio_cfg["n_mels"],
-        )
+        # Only run if we didn't already process from cache
+        if not local_npy_path.exists():
+            success = preprocess_and_save(
+                str(local_audio_path),
+                str(local_npy_path),
+                sr=audio_cfg["sr"],
+                n_fft=audio_cfg["n_fft"],
+                hop_length=audio_cfg["hop_length"],
+                n_mels=audio_cfg["n_mels"],
+            )
+        else:
+            # Re-process if previous cache was corrupted
+            success = preprocess_and_save(
+                str(local_audio_path),
+                str(local_npy_path),
+                sr=audio_cfg["sr"],
+                n_fft=audio_cfg["n_fft"],
+                hop_length=audio_cfg["hop_length"],
+                n_mels=audio_cfg["n_mels"],
+            )
 
         if success:
+            # Get total frames from newly created spectrogram
+            total_frames = get_spectrogram_frames(str(local_npy_path))
+            
             row_dict = row.to_dict()
             row_dict["scientific_name_id"] = sci_to_id[row["scientific_name"]]
             row_dict["spectrogram_filename"] = npy_filename
             row_dict["local_spectrogram_path"] = str(local_npy_path)
+            row_dict["total_frames"] = total_frames  # Store frame count
             processed_rows.append(row_dict)
 
             processed_count += 1
@@ -148,34 +194,57 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
             proc=processed_count, skip=skipped_count, fail=failed_count
         )
 
-    # Output aligned metadata CSV
-    tag = "full" if (use_full_dataset or data_cfg.get("use_full_dataset", False)) else "balanced"
-    output_metadata_csv = Path(data_cfg["metadata_dir"]) / (
-        f"metadata_{tag}_sr{audio_cfg['sr']}_nfft{audio_cfg['n_fft']}"
-        f"_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}"
-        f"_seg{segment_size}.csv"
-    )
+    # Add summary statistics to final DataFrame
+    if processed_rows:
+        # Output aligned metadata CSV
+        tag = "full" if (use_full_dataset or data_cfg.get("use_full_dataset", False)) else "balanced"
+        output_metadata_csv = Path(data_cfg["metadata_dir"]) / (
+            f"metadata_{tag}_sr{audio_cfg['sr']}_nfft{audio_cfg['n_fft']}"
+            f"_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}"
+            f"_seg{segment_size}.csv"
+        )
 
-    os.makedirs(output_metadata_csv.parent, exist_ok=True)
-    final_df = pd.DataFrame(processed_rows)
-    final_df.to_csv(output_metadata_csv, index=False)
+        os.makedirs(output_metadata_csv.parent, exist_ok=True)
+        final_df = pd.DataFrame(processed_rows)
+        
+        # Add derived column: number of valid windows per recording
+        # This is useful for the sliding window strategy
+        final_df["num_windows"] = final_df["total_frames"].apply(
+            lambda frames: max(1, (frames - segment_size) // audio_cfg.get("window_stride", 256) + 1)
+            if frames > segment_size else 1
+        )
+        
+        final_df.to_csv(output_metadata_csv, index=False)
 
-    elapsed_time = time.time() - start_time
-    mins, secs = divmod(int(elapsed_time), 60)
-    hrs, mins = divmod(mins, 60)
-    time_str = f"{hrs}h {mins}m {secs}s" if hrs > 0 else f"{mins}m {secs}s"
+        elapsed_time = time.time() - start_time
+        mins, secs = divmod(int(elapsed_time), 60)
+        hrs, mins = divmod(mins, 60)
+        time_str = f"{hrs}h {mins}m {secs}s" if hrs > 0 else f"{mins}m {secs}s"
 
-    print("\n==================================================")
-    print("Pipeline Complete")
-    print("==================================================")
-    print(f"Dataset mode         : {tag.upper()}")
-    print(f"Classes              : {len(unique_sci):,}")
-    print(f"Requested samples    : {total_requested:,}")
-    print(f"Processed            : {processed_count:,}")
-    print(f"Skipped (cached)     : {skipped_count:,}")
-    print(f"Failed               : {failed_count:,}")
-    print(f"Total retained       : {len(final_df):,}")
-    print(f"\nMetadata CSV         : {output_metadata_csv.name}")
-    print(f"Raw audio retained   : {RAW_AUDIO_DIR}")
-    print(f"Elapsed time         : {time_str}")
-    print("==================================================\n")
+        # Calculate frame statistics
+        mean_frames = final_df["total_frames"].mean()
+        min_frames = final_df["total_frames"].min()
+        max_frames = final_df["total_frames"].max()
+        
+        print("\n==================================================")
+        print("Pipeline Complete")
+        print("==================================================")
+        print(f"Dataset mode         : {tag.upper()}")
+        print(f"Classes              : {len(unique_sci):,}")
+        print(f"Requested samples    : {total_requested:,}")
+        print(f"Processed            : {processed_count:,}")
+        print(f"Skipped (cached)     : {skipped_count:,}")
+        print(f"Failed               : {failed_count:,}")
+        print(f"Total retained       : {len(final_df):,}")
+        print(f"\nFrame statistics:")
+        print(f"  Mean frames        : {mean_frames:.1f}")
+        print(f"  Min frames         : {min_frames}")
+        print(f"  Max frames         : {max_frames}")
+        print(f"  Segment size       : {segment_size}")
+        print(f"  Mean windows       : {final_df['num_windows'].mean():.1f}")
+        print(f"\nMetadata CSV         : {output_metadata_csv.name}")
+        print(f"Raw audio retained   : {RAW_AUDIO_DIR}")
+        print(f"Elapsed time         : {time_str}")
+        print("==================================================\n")
+    else:
+        print("\n⚠️ No samples were successfully processed!")
