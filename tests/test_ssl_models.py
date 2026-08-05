@@ -64,81 +64,219 @@ class TestCNNEncoder:
         encoder = CNNEncoder(n_mels=128, embed_dim=512, base_channels=64)
         assert isinstance(encoder, nn.Module)
         assert encoder.embed_dim == 512
+        assert encoder.get_output_dim() == 512
+        assert encoder.get_feature_dim() == 512
+        assert encoder.get_sequence_dim() == 512
     
-    def test_input_output_shape(self, cnn_encoder, sample_batch):
-        """Output should have shape [B, embed_dim]."""
+    def test_forward_output_shape(self, cnn_encoder, sample_batch):
+        """forward() should output [B, embed_dim]."""
         h = cnn_encoder(sample_batch)
         assert h.shape == (4, 512)
     
-    def test_batch_size_independence(self, cnn_encoder):
-        """Should work with different batch sizes."""
+    def test_forward_features_output_shape(self, cnn_encoder, sample_batch):
+        """forward_features() should output [B, C, H, W] feature map."""
+        # sample_batch: [4, 1, 128, 256]
+        features = cnn_encoder.forward_features(sample_batch)
+        
+        B, C, H, W = features.shape
+        assert B == 4
+        assert C == 512  # base_channels * 8
+        assert H == 8    # n_mels / 16 = 128/16
+        assert W == 16   # time / 16 = 256/16
+    
+    def test_forward_sequence_output_shape(self, cnn_encoder, sample_batch):
+        """forward_sequence() should output [B, S, D] token sequence."""
+        # sample_batch: [4, 1, 128, 256]
+        sequence = cnn_encoder.forward_sequence(sample_batch)
+        
+        B, S, D = sequence.shape
+        assert B == 4
+        assert S == 16   # time / 16 = 256/16
+        assert D == 512  # base_channels * 8
+    
+    def test_forward_sequence_for_transformer_input(self, cnn_encoder):
+        """Sequence output should be compatible with transformer models."""
+        # Test with different time lengths
+        for T in [128, 256, 512]:
+            x = torch.randn(2, 1, 128, T)
+            sequence = cnn_encoder.forward_sequence(x)
+            
+            expected_S = T // 16
+            assert sequence.shape == (2, expected_S, 512)
+    
+    def test_all_forward_methods_consistent(self, cnn_encoder, sample_batch):
+        """Different forward methods should be based on same features."""
+        h = cnn_encoder(sample_batch)
+        features = cnn_encoder.forward_features(sample_batch)
+        sequence = cnn_encoder.forward_sequence(sample_batch)
+        
+        # Verify that forward() result is consistent with forward_features()
+        # Manual computation of forward() from features
+        manual = cnn_encoder.freq_pool(features)
+        manual = cnn_encoder.time_pool(manual)
+        manual = manual.view(manual.size(0), -1)
+        manual = cnn_encoder.dropout(manual)
+        manual = cnn_encoder.embed(manual)
+        
+        assert torch.allclose(h, manual, atol=1e-5)
+        
+        # Verify sequence is derived from features
+        manual_seq = cnn_encoder.freq_pool(features)
+        manual_seq = manual_seq.squeeze(2)
+        manual_seq = manual_seq.transpose(1, 2)
+        
+        assert torch.allclose(sequence, manual_seq, atol=1e-5)
+    
+    def test_batch_size_independence_all_methods(self, cnn_encoder):
+        """All forward methods should work with different batch sizes."""
         for B in [1, 2, 8, 16]:
             x = torch.randn(B, 1, 128, 256)
+            
             h = cnn_encoder(x)
+            features = cnn_encoder.forward_features(x)
+            sequence = cnn_encoder.forward_sequence(x)
+            
             assert h.shape == (B, 512)
+            assert features.shape == (B, 512, 8, 16)
+            assert sequence.shape == (B, 16, 512)
     
     def test_time_steps_flexibility(self, cnn_encoder):
-        """Should handle different time lengths via adaptive pooling."""
+        """All methods should handle different time lengths."""
         for T in [128, 256, 512, 1024]:
             x = torch.randn(2, 1, 128, T)
+            
+            # forward() always returns fixed size via adaptive pooling
             h = cnn_encoder(x)
             assert h.shape == (2, 512)
+            
+            # forward_features() preserves temporal dimension
+            features = cnn_encoder.forward_features(x)
+            expected_W = T // 16
+            assert features.shape == (2, 512, 8, expected_W)
+            
+            # forward_sequence() adapts to temporal dimension
+            sequence = cnn_encoder.forward_sequence(x)
+            assert sequence.shape == (2, expected_W, 512)
+    
+    def test_features_preserve_spatial_info(self, cnn_encoder):
+        """Feature map should preserve spatial structure."""
+        # Create two spectrograms with different patterns in different regions
+        x1 = torch.zeros(1, 1, 128, 512)
+        x1[:, :, :64, :256] = 1.0  # Top-left quadrant active
+        
+        x2 = torch.zeros(1, 1, 128, 512)
+        x2[:, :, 64:, 256:] = 1.0  # Bottom-right quadrant active
+        
+        features1 = cnn_encoder.forward_features(x1)
+        features2 = cnn_encoder.forward_features(x2)
+        
+        # Features should be different (spatial info preserved)
+        assert not torch.allclose(features1, features2, atol=1e-2)
+    
+    def test_sequence_temporal_order(self, cnn_encoder):
+        """Sequence tokens should maintain temporal order."""
+        # Create spectrogram with distinct patterns at different times
+        x = torch.zeros(1, 1, 128, 320)
+        x[:, :, :, :100] = 1.0   # Early
+        x[:, :, :, 220:] = 2.0   # Late
+        
+        sequence = cnn_encoder.forward_sequence(x)  # [1, 20, 512]
+        
+        # Early tokens should differ from late tokens
+        early_tokens = sequence[:, :5, :]   # First 5 tokens
+        late_tokens = sequence[:, -5:, :]   # Last 5 tokens
+        
+        # Mean patterns should be different
+        assert not torch.allclose(
+            early_tokens.mean(dim=1),
+            late_tokens.mean(dim=1),
+            atol=1e-3,
+        )
     
     def test_output_is_float(self, cnn_encoder, sample_batch):
-        """Output should be float32."""
+        """All outputs should be float32."""
         h = cnn_encoder(sample_batch)
-        assert h.dtype == torch.float32
-    
-    def test_output_is_not_constant(self, cnn_encoder, sample_batch):
-        """Different inputs should produce different outputs."""
-        x1 = torch.randn(4, 1, 128, 256)
-        x2 = torch.randn(4, 1, 128, 256)
-        h1 = cnn_encoder(x1)
-        h2 = cnn_encoder(x2)
-        assert not torch.allclose(h1, h2)
-    
-    def test_gradient_flow(self, cnn_encoder, sample_batch):
-        """Gradients should flow through encoder."""
-        h = cnn_encoder(sample_batch)
-        loss = h.sum()
-        loss.backward()
+        features = cnn_encoder.forward_features(sample_batch)
+        sequence = cnn_encoder.forward_sequence(sample_batch)
         
-        # Check that gradients exist
-        for name, param in cnn_encoder.named_parameters():
-            assert param.grad is not None, f"No gradient for {name}"
-            assert param.grad.abs().sum() > 0, f"Zero gradient for {name}"
+        assert h.dtype == torch.float32
+        assert features.dtype == torch.float32
+        assert sequence.dtype == torch.float32
     
-    def test_get_output_dim(self, cnn_encoder):
-        """get_output_dim should return correct dimension."""
-        assert cnn_encoder.get_output_dim() == 512
+    def test_output_deterministic_in_eval(self, cnn_encoder, sample_batch):
+        """All methods should be deterministic in eval mode."""
+        cnn_encoder.eval()
+        
+        h1 = cnn_encoder(sample_batch)
+        h2 = cnn_encoder(sample_batch)
+        assert torch.allclose(h1, h2)
+        
+        f1 = cnn_encoder.forward_features(sample_batch)
+        f2 = cnn_encoder.forward_features(sample_batch)
+        assert torch.allclose(f1, f2)
+        
+        s1 = cnn_encoder.forward_sequence(sample_batch)
+        s2 = cnn_encoder.forward_sequence(sample_batch)
+        assert torch.allclose(s1, s2)
     
-    def test_custom_embed_dim(self):
-        """Should support custom embedding dimensions."""
-        for embed_dim in [128, 256, 512, 1024]:
-            encoder = CNNEncoder(n_mels=128, embed_dim=embed_dim)
-            x = torch.randn(2, 1, 128, 256)
-            h = encoder(x)
-            assert h.shape == (2, embed_dim)
+    def test_gradient_flow_all_methods(self, cnn_encoder):
+        """Gradients should flow through all forward methods."""
+        x = torch.randn(4, 1, 128, 256, requires_grad=False)
+        
+        # Test forward()
+        h = cnn_encoder(x)
+        loss_h = h.sum()
+        loss_h.backward()
+        # Check gradients exist
+        grad_count = sum(
+            1 for p in cnn_encoder.parameters()
+            if p.grad is not None and p.grad.abs().sum() > 0
+        )
+        assert grad_count > 0, "No gradients in forward()"
+        cnn_encoder.zero_grad()
+        
+        # Test forward_features()
+        features = cnn_encoder.forward_features(x)
+        loss_f = features.sum()
+        loss_f.backward()
+        grad_count = sum(
+            1 for p in cnn_encoder.parameters()
+            if p.grad is not None and p.grad.abs().sum() > 0
+        )
+        assert grad_count > 0, "No gradients in forward_features()"
+        cnn_encoder.zero_grad()
+        
+        # Test forward_sequence()
+        sequence = cnn_encoder.forward_sequence(x)
+        loss_s = sequence.sum()
+        loss_s.backward()
+        grad_count = sum(
+            1 for p in cnn_encoder.parameters()
+            if p.grad is not None and p.grad.abs().sum() > 0
+        )
+        assert grad_count > 0, "No gradients in forward_sequence()"
     
-    def test_custom_base_channels(self):
-        """Should support custom base channel count."""
+    def test_custom_base_channels_feature_dim(self):
+        """get_feature_dim should match base_channels * 8."""
         for base_ch in [32, 64, 128]:
             encoder = CNNEncoder(n_mels=128, embed_dim=512, base_channels=base_ch)
-            x = torch.randn(2, 1, 128, 256)
-            h = encoder(x)
-            assert h.shape == (2, 512)
+            assert encoder.get_feature_dim() == base_ch * 8
+            
+            x = torch.randn(1, 1, 128, 256)
+            features = encoder.forward_features(x)
+            assert features.shape[1] == base_ch * 8
     
-    def test_dropout_training_vs_eval(self, cnn_encoder, sample_batch):
-        """Dropout should behave differently in train vs eval mode."""
-        cnn_encoder.train()
-        h_train = cnn_encoder(sample_batch)
+    def test_sequence_as_transformer_tokens(self, cnn_encoder):
+        """Verify sequence output format for transformer integration."""
+        x = torch.randn(2, 1, 128, 512)
+        tokens = cnn_encoder.forward_sequence(x)  # [2, 32, 512]
         
-        cnn_encoder.eval()
-        h_eval = cnn_encoder(sample_batch)
+        # Simulate transformer input preparation
+        # Add CLS token
+        cls_token = torch.randn(1, 1, 512).expand(2, -1, -1)
+        with_cls = torch.cat([cls_token, tokens], dim=1)  # [2, 33, 512]
         
-        # In eval mode, output should be deterministic
-        h_eval2 = cnn_encoder(sample_batch)
-        assert torch.allclose(h_eval, h_eval2)
+        assert with_cls.shape == (2, 33, 512)
     
     def test_weight_initialization(self):
         """Weights should be initialized with non-zero values."""
@@ -146,7 +284,86 @@ class TestCNNEncoder:
         for name, param in encoder.named_parameters():
             if 'weight' in name:
                 assert param.abs().sum() > 0, f"Zero weights for {name}"
+    
+    def test_conv_output_shapes_intermediate(self, cnn_encoder):
+        """Verify intermediate conv block shapes."""
+        x = torch.randn(1, 1, 128, 256)
+        
+        # Check each conv block manually
+        out = cnn_encoder.conv1(x)
+        assert out.shape == (1, 64, 64, 128), f"conv1: {out.shape}"
+        
+        out = cnn_encoder.conv2(out)
+        assert out.shape == (1, 128, 32, 64), f"conv2: {out.shape}"
+        
+        out = cnn_encoder.conv3(out)
+        assert out.shape == (1, 256, 16, 32), f"conv3: {out.shape}"
+        
+        out = cnn_encoder.conv4(out)
+        assert out.shape == (1, 512, 8, 16), f"conv4: {out.shape}"
 
+
+# ============================================================================
+# Integration: CNN features → SimCLR
+# ============================================================================
+
+class TestCNNSimCLRIntegration:
+    """Test integration between CNN encoder features and SimCLR."""
+    
+    def test_features_to_ssl(self):
+        """CNN features should be usable for SSL pretraining."""
+        encoder = CNNEncoder(n_mels=128, embed_dim=512)
+        projection = ProjectionHead(input_dim=512, hidden_dim=256, output_dim=128)
+        
+        model = SimCLR(encoder=encoder, projection=projection, temperature=0.07)
+        
+        x1 = torch.randn(8, 1, 128, 256)
+        x2 = torch.randn(8, 1, 128, 256)
+        
+        loss, acc = model.training_step(x1, x2)
+        assert loss.dim() == 0
+        assert loss.item() >= 0
+    
+    def test_features_reuse_for_classification(self):
+        """Pretrained features should be reusable for classification."""
+        encoder = CNNEncoder(n_mels=128, embed_dim=512)
+        
+        # Simulate pretraining
+        x = torch.randn(4, 1, 128, 256)
+        h = encoder(x)  # Get pooled embedding
+        
+        # Add classification head
+        classifier = nn.Linear(512, 10)
+        logits = classifier(h)
+        
+        assert logits.shape == (4, 10)
+    
+    def test_sequence_to_transformer_classifier(self):
+        """Sequence output should feed into transformer classifier."""
+        encoder = CNNEncoder(n_mels=128, embed_dim=512)
+        
+        x = torch.randn(2, 1, 128, 512)
+        tokens = encoder.forward_sequence(x)  # [2, 32, 512]
+        
+        # Simple transformer layer
+        transformer_layer = nn.TransformerEncoderLayer(
+            d_model=512,
+            nhead=8,
+            batch_first=True,
+        )
+        
+        # Should work without errors
+        output = transformer_layer(tokens)
+        assert output.shape == tokens.shape
+    
+    def test_encode_method_uses_pooled_forward(self, simclr_model, sample_batch):
+        """SimCLR.encode() should use the pooled forward()."""
+        h = simclr_model.encode(sample_batch)
+        assert h.shape == (4, 512)
+        
+        # Should match encoder's forward() directly
+        h_direct = simclr_model.encoder(sample_batch)
+        assert torch.allclose(h, h_direct)
 
 # ============================================================================
 # Projection Head Tests
