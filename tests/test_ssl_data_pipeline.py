@@ -14,7 +14,9 @@ import tempfile
 import os
 import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add project root to sys.path
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR))
 
 from src.data.augmentations import (
     BaseAugmentation,

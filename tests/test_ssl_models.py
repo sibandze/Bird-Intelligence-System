@@ -12,7 +12,9 @@ import numpy as np
 from unittest.mock import Mock, patch
 import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add project root to sys.path
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR))
 
 from src.models.encoders import CNNEncoder
 from src.models.heads import ProjectionHead
