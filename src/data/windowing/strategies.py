@@ -129,7 +129,8 @@ class RandomWindowStrategy(BaseWindowStrategy):
             max_start = max(0, total_frames - segment_size)
 
             if is_train and max_start > 0:
-                start = random.randint(0, max_start)
+                rng = random.Random(epoch + idx)
+                start = rng.randint(0, max_start)
             else:
                 start = max_start // 2
 

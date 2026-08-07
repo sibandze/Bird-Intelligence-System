@@ -661,3 +661,59 @@ class TestSupervisedDataset:
                 label_to_idx=incomplete_mapping,
                 **base_ssl_config,
             )
+
+class TestEdgeCases:
+
+    @patch('src.data.datasets.base.load_local_spectrogram')
+    def test_legacy_total_frames_fallback(
+        self, mock_load, base_ssl_config
+    ):
+        """Test _get_total_frames fallback when total_frames column is NaN."""
+        # DataFrame without total_frames
+        df_no_frames = pd.DataFrame({
+            'scientific_name': ['Species_A'],
+            'scientific_name_id': [0],
+            'local_spectrogram_path': ['/fake/path/spec1.npy'],
+        })
+        mel = np.random.randn(128, 600).astype(np.float32)
+        mock_load.return_value = mel
+
+        dataset = SSLBirdSongDataset(
+            df=df_no_frames,
+            **base_ssl_config,
+        )
+
+        # Should call load_local_spectrogram to get frames
+        frames = dataset._get_total_frames(df_no_frames.iloc[0], 0)
+        assert frames == 600
+        mock_load.assert_called_once()
+
+    def test_random_window_strategy_deterministic_with_epoch(
+        self, mock_metadata_df, base_ssl_config
+    ):
+        """Random strategy should produce same windows given same epoch seed."""
+        # Patch random to be deterministic per epoch
+        original_random = random.randint
+        calls = []
+
+        def tracked_randint(a, b):
+            calls.append((a, b))
+            return original_random(a, b)
+
+        with patch('random.randint', side_effect=tracked_randint):
+            dataset = SSLBirdSongDataset(
+                df=mock_metadata_df,
+                window_config={'strategy': 'random'},
+                **base_ssl_config,
+            )
+            windows_epoch0 = list(dataset.windows)
+
+            dataset.set_epoch(1)
+            windows_epoch1 = list(dataset.windows)
+
+        # Windows should change between epochs
+        assert windows_epoch0!= windows_epoch1
+        # But if we reset to epoch 0, we should get same as before
+        dataset.set_epoch(0)
+        windows_epoch0_again = list(dataset.windows)
+        assert windows_epoch0 == windows_epoch0_again
