@@ -6,9 +6,7 @@ from .base import BaseAugmentation
 
 
 class SpecAugmentation(BaseAugmentation):
-    """
-    SpecAugment: Frequency and time masking augmentation.
-    """
+    """SpecAugment: Frequency and time masking augmentation."""
 
     def __init__(
         self,
@@ -31,19 +29,31 @@ class SpecAugmentation(BaseAugmentation):
         if not self.enabled:
             return mel_tensor
 
-        # Avoid modifying the original input tensor in-place
         mel_tensor = mel_tensor.clone()
 
-        # Handle both [C, F, T] and [B, C, F, T] shapes
+        # Handle shape normalization
         if mel_tensor.dim() == 3:
-            mel_tensor = mel_tensor.unsqueeze(0)
-            was_3d = True
-        else:
-            was_3d = False
+            # If shape is [B, F, T] (e.g. 1-channel batch), unsqueeze channel dim -> [B, 1, F, T]
+            # If shape is [C, F, T] where C is 1, treat as unbatched -> [1, C, F, T]
+            if mel_tensor.shape[0] > 1 and mel_tensor.shape[0] != 1:  # [B, F, T]
+                mel_tensor = mel_tensor.unsqueeze(1)  # [B, 1, F, T]
+                was_3d_batch = True
+                was_3d_single = False
+            else:  # [1, F, T] or [C, F, T] single sample
+                mel_tensor = mel_tensor.unsqueeze(0)  # [1, C, F, T]
+                was_3d_batch = False
+                was_3d_single = True
+        elif mel_tensor.dim() == 2:  # [F, T]
+            mel_tensor = mel_tensor.unsqueeze(0).unsqueeze(0)  # [1, 1, F, T]
+            was_3d_batch = False
+            was_3d_single = True
+        else:  # Already 4D [B, C, F, T]
+            was_3d_batch = False
+            was_3d_single = False
 
         B, C, n_mels, n_frames = mel_tensor.shape
 
-        # Apply per-sample masks
+        # Apply per-sample masks across batch dimension B
         for b in range(B):
             if random.random() >= self.prob:
                 continue
@@ -64,18 +74,10 @@ class SpecAugmentation(BaseAugmentation):
                     t0 = random.randint(0, n_frames - t)
                     mel_tensor[b, :, :, t0:t0 + t] = 0.0
 
-        if was_3d:
-            mel_tensor = mel_tensor.squeeze(0)
+        # Restore original tensor shape layout
+        if was_3d_batch:
+            mel_tensor = mel_tensor.squeeze(1)  # Return to [B, F, T]
+        elif was_3d_single:
+            mel_tensor = mel_tensor.squeeze(0)  # Return to original 3D or 2D
 
         return mel_tensor
-
-    def get_params(self) -> dict:
-        return {
-            'type': 'specaugment',
-            'enabled': self.enabled,
-            'prob': self.prob,
-            'num_freq_masks': self.num_freq_masks,
-            'freq_mask_param': self.freq_mask_param,
-            'num_time_masks': self.num_time_masks,
-            'time_mask_param': self.time_mask_param,
-        }
