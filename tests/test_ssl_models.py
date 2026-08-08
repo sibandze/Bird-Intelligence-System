@@ -519,7 +519,7 @@ class TestSimCLRLoss:
         assert loss_high.item() >= 0
         # With small batch (2 samples), temperature effect may not hold monotonically
         # Just verify they're different 
-       assert loss_low.item() != loss_high.item(), \
+        assert loss_low.item() != loss_high.item(), \
               f"Temperature should affect loss: both are {loss_low.item():.4f}"
 
     def test_perfect_pairs_zero_loss(self, simclr_model):
