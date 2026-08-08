@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import pandas as pd
 from unittest.mock import Mock, patch
 import sys
 from pathlib import Path
@@ -21,12 +22,34 @@ from src.models.encoders import CNNEncoder
 from src.models.heads import ProjectionHead
 from src.models.ssl import SimCLR
 from src.models.ssl.simclr import nt_xent_loss_standalone
-
+from src.data.datasets import SSLBirdSongDataset, SimCLRDataset, simclr_collate_fn
 
 # ============================================================================
 # Fixtures
 # ============================================================================
+@pytest.fixture
+def mock_metadata_df():
+    import pandas as pd
+    return pd.DataFrame({
+        'scientific_name': ['Species_A', 'Species_B', 'Species_A'],
+        'scientific_name_id': [0, 1, 0],
+        'local_spectrogram_path': [
+            '/fake/path/spec1.npy',
+            '/fake/path/spec2.npy',
+            '/fake/path/spec3.npy',
+        ],
+        'total_frames': [500, 300, 450],
+    })
 
+@pytest.fixture
+def base_ssl_config():
+    return {
+        'segment_size': 256,
+        'min_db': -80.0,
+        'max_db': 0.0,
+        'train': True,
+        'window_config': {'strategy': 'sliding', 'stride': 256},
+    }
 @pytest.fixture
 def sample_batch():
     """Create a sample batch of spectrograms."""
