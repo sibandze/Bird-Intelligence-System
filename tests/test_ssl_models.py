@@ -29,7 +29,6 @@ from src.data.datasets import SSLBirdSongDataset, SimCLRDataset, simclr_collate_
 # ============================================================================
 @pytest.fixture
 def mock_metadata_df():
-    import pandas as pd
     return pd.DataFrame({
         'scientific_name': ['Species_A', 'Species_B', 'Species_A'],
         'scientific_name_id': [0, 1, 0],
