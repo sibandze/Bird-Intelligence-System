@@ -85,7 +85,7 @@ class SpecAugmentation(BaseAugmentation):
     def get_params(self) -> dict:
         """Return current augmentation parameters for logging."""
         return {
-            'type': 'spectrogram',
+            'type': 'specaugment',
             'enabled': self.enabled,
             'prob': self.prob,
             'num_freq_masks': self.num_freq_masks,
