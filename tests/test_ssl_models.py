@@ -134,6 +134,7 @@ class TestCNNEncoder:
     
     def test_all_forward_methods_consistent(self, cnn_encoder, sample_batch):
         """Different forward methods should be based on same features."""
+        cnn_encoder.eval()
         h = cnn_encoder(sample_batch)
         features = cnn_encoder.forward_features(sample_batch)
         sequence = cnn_encoder.forward_sequence(sample_batch)
@@ -157,6 +158,7 @@ class TestCNNEncoder:
     
     def test_batch_size_independence_all_methods(self, cnn_encoder):
         """All forward methods should work with different batch sizes."""
+        cnn_encoder.eval()
         for B in [1, 2, 8, 16]:
             x = torch.randn(B, 1, 128, 256)
             
@@ -386,6 +388,7 @@ class TestCNNSimCLRIntegration:
     
     def test_encode_method_uses_pooled_forward(self, simclr_model, sample_batch):
         """SimCLR.encode() should use the pooled forward()."""
+        simclr_model.eval()
         h = simclr_model.encode(sample_batch)
         assert h.shape == (4, 512)
         
@@ -414,6 +417,7 @@ class TestProjectionHead:
     
     def test_batch_size_independence(self, projection_head):
         """Should work with different batch sizes."""
+        projection_head.eval()
         for B in [1, 2, 16, 64]:
             h = torch.randn(B, 512)
             z = projection_head(h)
