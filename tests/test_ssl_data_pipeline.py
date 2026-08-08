@@ -682,6 +682,8 @@ class TestEdgeCases:
             **base_ssl_config,
         )
 
+        mock_load.reset_mock()
+        
         # Should call load_local_spectrogram to get frames
         frames = dataset._get_total_frames(df_no_frames.iloc[0], 0)
         assert frames == 600
