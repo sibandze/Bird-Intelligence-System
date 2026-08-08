@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch, MagicMock
 import tempfile
 import os
 import sys
+from pathlib import Path
 
 # Add project root to sys.path
 ROOT_DIR = Path(__file__).resolve().parent.parent
