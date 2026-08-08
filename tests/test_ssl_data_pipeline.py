@@ -86,8 +86,6 @@ def base_ssl_config():
         'segment_size': 256,
         'min_db': -80.0,
         'max_db': 0.0,
-        'train': True,
-        'window_config': {'strategy': 'sliding', 'stride': 256},
     }
 
 
