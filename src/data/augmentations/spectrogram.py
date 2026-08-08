@@ -81,3 +81,15 @@ class SpecAugmentation(BaseAugmentation):
             mel_tensor = mel_tensor.squeeze(0)  # Return to original 3D or 2D
 
         return mel_tensor
+
+    def get_params(self) -> dict:
+        """Return current augmentation parameters for logging."""
+        return {
+            'type': 'spectrogram',
+            'enabled': self.enabled,
+            'prob': self.prob,
+            'num_freq_masks': self.num_freq_masks,
+            'freq_mask_param': self.freq_mask_param,
+            'num_time_masks': self.num_time_masks,
+            'time_mask_param': self.time_mask_param,
+        }
