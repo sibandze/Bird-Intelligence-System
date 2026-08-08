@@ -622,6 +622,7 @@ class TestSimCLRModel:
     
     def test_accuracy_perfect_pairs(self, simclr_model):
         """Accuracy should be 100% for perfect pairs."""
+        simclr_model.eval()
         x = torch.randn(8, 1, 128, 256)
         x1 = x.clone()
         x2 = x.clone()
@@ -630,7 +631,7 @@ class TestSimCLRModel:
         
         # With identical views, accuracy should be high
         # (but not necessarily 100% due to other negatives in batch)
-        assert acc.item() > 0.5, f"Expected >0.5, got {acc.item():.4f}"
+        assert acc.item() > 0.9, f"Expected >0.9, got {acc.item():.4f}"
     
     def test_custom_encoder(self):
         """Should accept custom encoder and projection."""
