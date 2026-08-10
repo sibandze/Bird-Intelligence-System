@@ -69,7 +69,7 @@ class SupervisedExperimentTrainer:
         """Create supervised dataloaders with proper windowing strategies."""
         batch_size = self.config['training']['batch_size']
         num_workers = self.config['training']['num_workers']
-        segment_size = (self.config['audio']['sr'] * self.config['audio']['segment_seconds']) // self.config['audio']['hop_length']
+        segmentegment_size = self.config["audio"]["segment_size"]
 
         train_df, test_df = train_test_split(
             df, test_size=0.2, random_state=42, stratify=df['scientific_name_id']
@@ -124,8 +124,8 @@ class SupervisedExperimentTrainer:
         train_loader, test_loader, label_to_idx, idx_to_label = self.get_dataloaders(df)
         class_names = [idx_to_label[i] for i in range(len(idx_to_label))]
 
-        segment_size = (self.config['audio']['sr'] * self.config['audio']['segment_seconds']) // self.config['audio']['hop_length']
-
+        segment_size = self.config['audio']['segment_size'] 
+        
         # Initialize Model
         self.model = BirdClassifier(
             n_mels=self.config["audio"]["n_mels"],
