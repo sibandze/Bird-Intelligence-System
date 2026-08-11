@@ -4,7 +4,7 @@ data:
   metadata_dir: "data/metadata"
   data_csv: "data/birds_voices.csv"
   num_classes: 5
-  num_samples_per_class: 50
+  num_samples_per_class: 10
 
 audio:
   sr: 32000
