@@ -69,14 +69,14 @@ class SupervisedExperimentTrainer:
         """Create supervised dataloaders with proper windowing strategies."""
         batch_size = self.config['training']['batch_size']
         num_workers = self.config['training']['num_workers']
-        segmentegment_size = self.config["audio"]["segment_size"]
+        segment_size = self.config["audio"]["segment_size"]
 
         train_df, test_df = train_test_split(
             df, test_size=0.2, random_state=42, stratify=df['scientific_name_id']
         )
 
         # Get windowing config from training config
-        window_config = self.config.get('windowing', {"strategy": "sliding", "stride": 256})
+        window_config = self.config['window']
 
         train_dataset = SupervisedBirdSongDataset(
             df=train_df,
@@ -87,6 +87,7 @@ class SupervisedExperimentTrainer:
             max_db=self.config['audio']['max_db'],
             window_config=window_config,
         )
+        
         test_dataset = SupervisedBirdSongDataset(
             df=test_df,
             segment_size=segment_size,
@@ -109,7 +110,7 @@ class SupervisedExperimentTrainer:
 
     def _get_augmentation_config(self) -> Dict:
         """Extract spec augmentation configuration."""
-        aug_cfg = self.config.get('augmentation', {})
+        aug_cfg = self.config['augmentation']
         return {
             'enabled': aug_cfg.get('enabled', True),
             'prob': aug_cfg.get('prob', 0.5),
@@ -166,10 +167,11 @@ class SupervisedExperimentTrainer:
         epochs = self.config['training']['epochs']
         scheduler_type = self.config['training'].get('scheduler_type', 'cosine')
         warmup_steps = self.config['training'].get('warmup_steps', 0)
+        total_steps = max(len(train_loader) * epochs, warmup_steps*2)
 
         self.scheduler = create_scheduler(
             optimizer=self.optimizer, scheduler_type=scheduler_type,
-            warmup_steps=warmup_steps, total_steps=len(train_loader) * epochs,
+            warmup_steps=warmup_steps, total_steps=total_steps,
             min_lr=self.config['training'].get('min_lr', 1e-6)
         )
         step_frequency = get_scheduler_step_frequency(scheduler_type)
