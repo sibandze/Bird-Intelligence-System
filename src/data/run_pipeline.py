@@ -41,7 +41,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
     PROCESSED_NPY_DIR = Path(data_cfg["processed_npy_dir"])
     num_classes = data_cfg.get("num_classes")
     num_samples_per_class = data_cfg.get("num_samples_per_class")
-    segment_size = audio_cfg["segment_size"]
+    segment_size = audio_cfg['audio']["segment_size"]
 
     os.makedirs(RAW_AUDIO_DIR, exist_ok=True)
     os.makedirs(PROCESSED_NPY_DIR, exist_ok=True)
