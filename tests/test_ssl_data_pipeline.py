@@ -353,7 +353,7 @@ class TestSSLBirdSongDataset:
         )
         
         x1, x2 = dataset[0]
-        expected_shape = (1, 128, base_ssl_config['segment_size'])
+        expected_shape = (1, 128, base_ssl_config['audio']['segment_size'])
         assert x1.shape == expected_shape, f"Expected {expected_shape}, got {x1.shape}"
         assert x2.shape == expected_shape
     
