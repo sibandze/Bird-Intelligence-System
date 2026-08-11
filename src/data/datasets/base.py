@@ -109,46 +109,20 @@ class BaseSpectrogramDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.windows)
-
-    def _extract_window_tensor(
-        self,
-        window: WindowIndex,
-    ) -> torch.Tensor:
-
+        
+    def _extract_window_tensor(self, window: WindowIndex) -> torch.Tensor:
         row = self.df.iloc[window.recording_idx]
-
-        mel = load_local_spectrogram(
-            row["local_spectrogram_path"]
-        )
-
+        mel = load_local_spectrogram(row["local_spectrogram_path"])
         mel = self._normalize(mel)
-
         T = mel.shape[1]
-
+        
         if T <= self.segment_size:
-
             pad = self.segment_size - T
-
-            # Preserve original dtype to avoid Float64/Float32 mismatches
-            mel_crop = np.pad(
-                mel,
-                ((0, 0), (0, pad)),
-                mode="constant",
-                constant_values=0.0,
-            ).astype(mel.dtype, copy=False)
-
+            mel_crop = np.pad(mel, ((0, 0), (0, pad)), mode="constant", constant_values=0.0).astype(mel.dtype)
         else:
-
-            mel_crop = mel[
-                :,
-                window.start_frame:window.end_frame,
-            ]
-
-        return (
-            torch.from_numpy(mel_crop)
-            .float()
-            .unsqueeze(0)
-        )
+            mel_crop = mel[:, window.start_frame:window.end_frame]
+            
+        return torch.from_numpy(mel_crop).float() 
 
     def _normalize(
         self,
