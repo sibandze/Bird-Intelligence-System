@@ -77,36 +77,28 @@ class SimCLRDataset(SSLBirdSongDataset):
     """SimCLR Specific Dataset Adapter."""
     pass
 
-def simclr_collate_fn(batch):
-    """Collates [(x1, x2), ...] into separate tensors (view1 [B, 1, F, T], view2 [B, 1, F, T])."""
-    view1_list, view2_list = zip(*batch)
-
-    x1 = torch.stack(view1_list, dim=0)
-    x2 = torch.stack(view2_list, dim=0)
-
-    return x1, x2
-
 class BYOLDataset(SSLBirdSongDataset):
     """BYOL Specific Dataset Adapter."""
     pass
-
-def byol_collate_fn(batch):
-    """Collates [(x1, x2), ...] into separate tensors (view1 [B, 1, F, T], view2 [B, 1, F, T])."""
-    view1_list, view2_list = zip(*batch)
-
-    x1 = torch.stack(view1_list, dim=0)
-    x2 = torch.stack(view2_list, dim=0)
-
-    return x1, x2
-
 
 class MoCoDataset(SSLBirdSongDataset):
     """MoCo Specific Dataset Adapter."""
     pass
 
-def moco_collate_fn(batch):
-    """Collates [(x1, x2), ...] into query (im_q) and key (im_k) batches."""
+def _ssl_dual_view_collate(batch):
+    """
+    Base collate for all dual-view SSL methods.
+    
+    Input:  batch = [(x1, x2), (x1, x2), ...] where x is [1, F, T]
+    Output: (x1_batch, x2_batch) where each is [B, 1, F, T]
+    """
     view1_list, view2_list = zip(*batch)
-    im_q = torch.stack(view1_list, dim=0)
-    im_k = torch.stack(view2_list, dim=0)
-    return im_q, im_k
+    x1 = torch.stack(view1_list, dim=0)  # [B, 1, F, T]
+    x2 = torch.stack(view2_list, dim=0)
+    return x1, x2
+
+# Framework-specific aliases
+# Keep separate names so we can extend them later without breaking API
+simclr_collate_fn = _ssl_dual_view_collate
+byol_collate_fn = _ssl_dual_view_collate  
+moco_collate_fn = _ssl_dual_view_collate
