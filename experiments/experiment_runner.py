@@ -10,16 +10,18 @@ from pathlib import Path
 from datetime import datetime
 import random
 import numpy as np
+import pandas as pd
 import torch
 from typing import Dict, Any, List
 import csv
 from tqdm import tqdm
-
+            
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.utils.configs import resolve_metadata_csv_path
 from experiments.sweep_configs import SWEEP_SUITES
-from src.training.experiment_train import ExperimentTrainer
+from src.training.supervised_experiment_train import SupervisedExperimentTrainer
 from src.utils.configs import load_and_resolve_config
 
 
@@ -57,9 +59,6 @@ class ExperimentManager:
     def load_data(self):
         """Load dataset once and cache it."""
         if self.df is None:
-            import pandas as pd
-            from src.utils.configs import resolve_metadata_csv_path
-            
             csv_path = resolve_metadata_csv_path(self.base_config)
             if not os.path.exists(csv_path):
                 raise FileNotFoundError(f"Processed CSV not found at {csv_path}. Run data pipeline first with: python main.py --pipeline")
@@ -187,8 +186,8 @@ class ExperimentManager:
         
         try:
             # Create trainer and run experiment
-            trainer = ExperimentTrainer(run_config, run_dir)
-            
+            trainer = SupervisedExperimentTrainer(run_config, run_dir)
+
             print(f"\n  [{run_index}] Training: {hyperparams}")
             metrics = trainer.train(self.df)
             
