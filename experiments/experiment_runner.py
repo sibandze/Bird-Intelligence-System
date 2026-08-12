@@ -4,6 +4,7 @@
 import os
 import sys
 import json
+import traceback
 import yaml
 import argparse
 from pathlib import Path
@@ -199,9 +200,10 @@ class ExperimentManager:
             return metrics
         
         except Exception as e:
-            print(f"      ✗ Error: {str(e)}")
+            tb = traceback.format_exc()
+            print(f"      ✗ Error during training: {str(e)}\n{tb}")
             # Log failure to CSV
-            metrics = {"accuracy": 0.0, "macro_f1": 0.0, "weighted_f1": 0.0, "error": str(e)}
+            metrics = {"accuracy": 0.0, "macro_f1": 0.0, "weighted_f1": 0.0, "error": str(e), 'error_traceback': tb}
             self.log_run_result(run_index, sweep_name, hyperparams, metrics)
             return None
 
