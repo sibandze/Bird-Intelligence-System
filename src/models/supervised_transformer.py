@@ -97,6 +97,11 @@ class SupervisedTransformer(nn.Module):
         returns: (B, num_classes) logits
         """
         # Encoder out: (B, N_patches+1, embed_dim)
+        print(
+            f"supervised_transformer.py SupervisedTransformer.forward "
+            f"x: {tuple(x.shape)}"
+        )
+
         enc_out = self.encoder(x, mask)
 
         # CLS token is first token
