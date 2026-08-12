@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from src.data.datasets import SupervisedBirdSongDataset
 from src.evaluation.metrics_collector import MetricsCollector
-from src.models.bird_classifier import BirdClassifier
+from src.models import SupervisedTransformer
 from src.training.precision import PrecisionManager
 from src.training.scheduler import create_scheduler, get_scheduler_step_frequency
 from src.utils.memory_utils import get_gpu_memory_info, log_memory_usage
@@ -128,16 +128,10 @@ class SupervisedExperimentTrainer:
         segment_size = self.config['audio']['segment_size'] 
         
         # Initialize Model
-        self.model = BirdClassifier(
-            n_mels=self.config["audio"]["n_mels"],
-            patch_size=self.config["model"]["patch_size"],
-            embed_dim=self.config["model"]["embed_dim"],
-            num_layers=self.config["model"]["num_layers"],
-            heads=self.config["model"]["heads"],
-            forward_expansion=self.config["model"]["forward_expansion"],
-            dropout=self.config["model"]["dropout"],
-            num_classes=self.config["data"]["num_classes"],
-            time_steps=segment_size,
+        self.model = SupervisedTransformer(
+            config=self.config,
+            device=str(self.device),  
+            num_classes=len(class_names),
         ).to(self.device)
 
         # Print Model and Environment Summary
