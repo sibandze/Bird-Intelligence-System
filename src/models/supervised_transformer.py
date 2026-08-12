@@ -1,5 +1,4 @@
-# src/models/bird_classifier.py
-
+# src/models/supervised_transformer.py
 """
 Mel Spectrogram
         │
@@ -34,32 +33,39 @@ import torch
 import torch.nn as nn
 from .encoder import Encoder
 
-class BirdClassifier(nn.Module):
+class SupervisedTransformer(nn.Module):
+    """
+    Supervised Transformer Classifier for Bird Species ID.
+    
+    Architecture: Mel -> PatchEmbed -> Transformer -> CLS -> MLP Head -> Logits
+    """
     def __init__(
         self,
-        n_mels=128,
-        patch_size=25,
-        embed_dim=256,
-        num_layers=6,
-        heads=8,
-        forward_expansion=4,
-        dropout=0.1,
-        num_classes=200, # <- set to your n_species
-        time_steps = 187,
-        device="cpu"
+        config: dict,
+        num_classes: int,
+        device: str = "cpu"
     ):
         super().__init__()
-        num_patches = time_steps // patch_size
-        max_len = num_patches + 1 + 10 # +1 CLS, + 10 buffer for longer audio
+        audio_cfg = config['audio']
+        model_cfg = config['model']
+
+        n_mels = audio_cfg['n_mels']
+        patch_size = model_cfg['patch_size']
+        embed_dim = model_cfg['embed_dim']
+        segment_size = audio_cfg['segment_size']
+
+        num_patches = segment_size // patch_size
+        max_len = num_patches + 1 + 10 # +1 CLS, + buffer
+
         self.encoder = Encoder(
             n_mels=n_mels,
             patch_size=patch_size,
             embed_size=embed_dim,
-            num_layers=num_layers,
-            heads=heads,
+            num_layers=model_cfg['num_layers'],
+            heads=model_cfg['heads'],
             device=device,
-            forward_expansion=forward_expansion,
-            dropout=dropout,
+            forward_expansion=model_cfg['forward_expansion'],
+            dropout=model_cfg['dropout'],
             max_len=max_len,
         )
 
@@ -68,10 +74,9 @@ class BirdClassifier(nn.Module):
             nn.LayerNorm(embed_dim),
             nn.Linear(embed_dim, embed_dim),
             nn.GELU(),
-            nn.Dropout(dropout),
+            nn.Dropout(model_cfg['dropout']),
             nn.Linear(embed_dim, num_classes)
         )
-
         self._init_weights()
 
     def _init_weights(self):
