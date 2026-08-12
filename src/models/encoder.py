@@ -52,8 +52,13 @@ class Encoder(nn.Module):
         mask: mask for the attention mechanism
         """
         # (B, num_patches, embed_size)
+        print(
+            f"encoder.py Encoder.forward input: {tuple(x.shape)}"
+        )
         out = self.dropout(self.input_layer(x))
-
+        print(
+            f"encoder.py Encoder.forward output: {tuple(out.shape)}"
+        )
         # Pass through each transformer block
         for layer in self.layers:
             # In Encoder, Query, Key, and Value are all the same (Self-Attention)
