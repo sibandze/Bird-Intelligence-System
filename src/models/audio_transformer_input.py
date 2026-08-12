@@ -41,7 +41,17 @@ class AudioTransformerInput(nn.Module):
         # Patch embedding
         # (B, N, D)
         # -------------------------
+        print(
+            f"audio_transformer_input.py AudioTransformerInput.forward "
+            f"input: {tuple(x.shape)}"
+        )
+        
         x = self.patch_embed(x)
+        
+        print(
+            f"audio_transformer_input.py AudioTransformerInput.forward "
+            f"after_patch_embed: {tuple(x.shape)}"
+        )
 
         # -------------------------
         # Add CLS token
