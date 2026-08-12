@@ -1,6 +1,10 @@
-"""Model definitions package for Bird-Intelligence-System.
-
+# src/models/__init__.py
+"""
+Model definitions package for Bird-Intelligence-System.
 Contains model architectures and related utilities.
 """
 
-__all__ = []
+from .supervised_transformer import 
+from .ssl.simclr import SimCLR
+
+__all__ = ['SupervisedTransformer', 'SimCLR']
