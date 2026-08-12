@@ -213,6 +213,15 @@ class SupervisedExperimentTrainer:
             train_loss, train_correct, train_total, epoch_grad_norm, num_batches = 0.0, 0, 0, 0.0, 0
 
             for batch_idx, (mel_segments, labels) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]", leave=False)):
+                if batch_idx == 0:    
+                    print(
+                        f"supervised_experiment_train.py train loop "
+                        f"mel_segments: {tuple(mel_segments.shape)}"
+                    )
+                    print(
+                        f"supervised_experiment_train.py train loop "
+                        f"labels: {tuple(labels.shape)}"
+                    )
                 batch_start_logs = {"batch": batch_idx}
                 self.cb_runner.on_batch_begin(self, batch_idx, batch_start_logs)
 
@@ -259,6 +268,15 @@ class SupervisedExperimentTrainer:
 
             with torch.no_grad():
                 for mel_segments, labels in tqdm(test_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]", leave=False):
+                    if batch_idx == 0:
+                        print(
+                            f"supervised_experiment_train.py validation loop "
+                            f"mel_segments: {tuple(mel_segments.shape)}"
+                        )
+                        print(
+                            f"supervised_experiment_train.py validation loop "
+                            f"labels: {tuple(labels.shape)}"
+                        )
                     mel_segments, labels = mel_segments.to(self.device), labels.to(self.device)
                     with self.precision.autocast():
                         logits = self.model(mel_segments)
