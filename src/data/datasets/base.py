@@ -128,7 +128,7 @@ class BaseSpectrogramDataset(Dataset):
             )
         else:
             mel_crop = mel[:, window.start_frame:window.end_frame]
-             print(
+            print(
                 f"base.py _extract_window_tensor mel_crop 2: {tuple(mel_crop.shape)}"
             )
         
