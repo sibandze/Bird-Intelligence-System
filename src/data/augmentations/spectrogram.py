@@ -27,35 +27,36 @@ class SpecAugmentation(BaseAugmentation):
 
     def __call__(self, mel_tensor: torch.Tensor) -> torch.Tensor:
         print(f"SpecAugmentation input: {tuple(mel_tensor.shape)}")
-
+        
         if not self.enabled:
             return mel_tensor
 
         mel_tensor = mel_tensor.clone()
 
-        # Handle shape normalization
-        if mel_tensor.dim() == 3:
-            # If shape is [B, F, T] (e.g. 1-channel batch), unsqueeze channel dim -> [B, 1, F, T]
-            # If shape is [C, F, T] where C is 1, treat as unbatched -> [1, C, F, T]
-            if mel_tensor.shape[0] > 1 and mel_tensor.shape[0] != 1:  # [B, F, T]
+        # Track original shape and normalization
+        original_dim = mel_tensor.dim()
+        was_2d = False
+        was_3d_batch = False
+        was_3d_single = False
+
+        # Normalize to 4D [B, C, F, T]
+        if original_dim == 2:
+            mel_tensor = mel_tensor.unsqueeze(0).unsqueeze(0)  # [1, 1, F, T]
+            was_2d = True
+        elif original_dim == 3:
+            # If first dim > 1, assume batch of 1‑channel spectrograms [B, F, T]
+            if mel_tensor.shape[0] > 1:
                 mel_tensor = mel_tensor.unsqueeze(1)  # [B, 1, F, T]
                 was_3d_batch = True
-                was_3d_single = False
-            else:  # [1, F, T] or [C, F, T] single sample
+            else:
+                # Single sample with channel dim [C, F, T] (C likely 1)
                 mel_tensor = mel_tensor.unsqueeze(0)  # [1, C, F, T]
-                was_3d_batch = False
                 was_3d_single = True
-        elif mel_tensor.dim() == 2:  # [F, T]
-            mel_tensor = mel_tensor.unsqueeze(0).unsqueeze(0)  # [1, 1, F, T]
-            was_3d_batch = False
-            was_3d_single = True
-        else:  # Already 4D [B, C, F, T]
-            was_3d_batch = False
-            was_3d_single = False
+        # else: already 4D, no flags needed
 
         B, C, n_mels, n_frames = mel_tensor.shape
 
-        # Apply per-sample masks across batch dimension B
+        # Apply masking (unchanged from original)
         for b in range(B):
             if random.random() >= self.prob:
                 continue
@@ -77,13 +78,17 @@ class SpecAugmentation(BaseAugmentation):
                     mel_tensor[b, :, :, t0:t0 + t] = 0.0
                     
         print(f"SpecAugmentation before_restore: {tuple(mel_tensor.shape)}")
-        # Restore original tensor shape layout
-        if was_3d_batch:
-            mel_tensor = mel_tensor.squeeze(1)  # Return to [B, F, T]
+
+        # Restore original shape
+        if was_2d:
+            mel_tensor = mel_tensor.squeeze(0).squeeze(0)  # [F, T]
+        elif was_3d_batch:
+            mel_tensor = mel_tensor.squeeze(1)             # [B, F, T]
         elif was_3d_single:
-            mel_tensor = mel_tensor.squeeze(0)  # Return to original 3D or 2D
+            mel_tensor = mel_tensor.squeeze(0)             # [C, F, T]
             
         print(f"SpecAugmentation output: {tuple(mel_tensor.shape)}")
+
         return mel_tensor
 
     def get_params(self) -> dict:
