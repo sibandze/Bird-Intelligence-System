@@ -17,5 +17,11 @@
     },
 
     // Runs the container as non-root for security and permission mapping sanity
-    "remoteUser": "vscode"
+    "remoteUser": "vscode",
+    
+    "features": {
+        "ghcr.io/devcontainers/features/sshd:1": {
+            "version": "latest"
+        }
+    }
 }
