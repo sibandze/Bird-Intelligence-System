@@ -233,7 +233,7 @@ checkpoints/
 # Training/evaluation output logs
 training_output.txt
 evaluation_output.txt
-output.txt
+out*.txt
 
 # Raw audio data (should be downloaded fresh or stored separately)
 data/raw_audio/
