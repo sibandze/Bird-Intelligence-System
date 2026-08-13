@@ -26,6 +26,8 @@ class SpecAugmentation(BaseAugmentation):
         self.time_mask_param = time_mask_param
 
     def __call__(self, mel_tensor: torch.Tensor) -> torch.Tensor:
+        print(f"SpecAugmentation input: {tuple(mel_tensor.shape)}")
+
         if not self.enabled:
             return mel_tensor
 
@@ -73,13 +75,15 @@ class SpecAugmentation(BaseAugmentation):
                     t = random.randint(1, max_t)
                     t0 = random.randint(0, n_frames - t)
                     mel_tensor[b, :, :, t0:t0 + t] = 0.0
-
+                    
+        print(f"SpecAugmentation before_restore: {tuple(mel_tensor.shape)}")
         # Restore original tensor shape layout
         if was_3d_batch:
             mel_tensor = mel_tensor.squeeze(1)  # Return to [B, F, T]
         elif was_3d_single:
             mel_tensor = mel_tensor.squeeze(0)  # Return to original 3D or 2D
-
+            
+        print(f"SpecAugmentation output: {tuple(mel_tensor.shape)}")
         return mel_tensor
 
     def get_params(self) -> dict:
