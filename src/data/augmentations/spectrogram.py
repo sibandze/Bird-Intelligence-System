@@ -1,9 +1,7 @@
 # src/data/augmentations/spectrogram.py
-
 import random
 import torch
 from .base import BaseAugmentation
-
 
 class SpecAugmentation(BaseAugmentation):
     """SpecAugment: Frequency and time masking augmentation."""
@@ -26,8 +24,8 @@ class SpecAugmentation(BaseAugmentation):
         self.time_mask_param = time_mask_param
 
     def __call__(self, mel_tensor: torch.Tensor) -> torch.Tensor:
-        print(f"SpecAugmentation input: {tuple(mel_tensor.shape)}")
-        
+        #print(f"SpecAugmentation input: {tuple(mel_tensor.shape)}")
+
         if not self.enabled:
             return mel_tensor
 
@@ -76,8 +74,8 @@ class SpecAugmentation(BaseAugmentation):
                     t = random.randint(1, max_t)
                     t0 = random.randint(0, n_frames - t)
                     mel_tensor[b, :, :, t0:t0 + t] = 0.0
-                    
-        print(f"SpecAugmentation before_restore: {tuple(mel_tensor.shape)}")
+
+        #print(f"SpecAugmentation before_restore: {tuple(mel_tensor.shape)}")
 
         # Restore original shape
         if was_2d:
@@ -86,8 +84,8 @@ class SpecAugmentation(BaseAugmentation):
             mel_tensor = mel_tensor.squeeze(1)             # [B, F, T]
         elif was_3d_single:
             mel_tensor = mel_tensor.squeeze(0)             # [C, F, T]
-            
-        print(f"SpecAugmentation output: {tuple(mel_tensor.shape)}")
+
+        #print(f"SpecAugmentation output: {tuple(mel_tensor.shape)}")
 
         return mel_tensor
 
