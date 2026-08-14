@@ -14,13 +14,13 @@ from .process_audio import preprocess_and_save
 def get_spectrogram_frames(npy_path: str) -> int:
     """
     Get total number of time frames from a saved spectrogram.
-    
+
     Loads only the shape from the .npy file header without loading
     the full array into memory when using mmap_mode='r'.
-    
+
     Args:
         npy_path: Path to .npy spectrogram file
-        
+
     Returns:
         Total number of time frames (T dimension)
     """
@@ -41,7 +41,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
     PROCESSED_NPY_DIR = Path(data_cfg["processed_npy_dir"])
     num_classes = data_cfg.get("num_classes")
     num_samples_per_class = data_cfg.get("num_samples_per_class")
-    segment_size = audio_cfg['audio']["segment_size"]
+    segment_size = audio_cfg["segment_size"]
 
     os.makedirs(RAW_AUDIO_DIR, exist_ok=True)
     os.makedirs(PROCESSED_NPY_DIR, exist_ok=True)
@@ -121,7 +121,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
         if local_npy_path.exists():
             # Get total frames from cached spectrogram
             total_frames = get_spectrogram_frames(str(local_npy_path))
-            
+
             if total_frames > 0:
                 row_dict = row.to_dict()
                 row_dict["scientific_name_id"] = sci_to_id[row["scientific_name"]]
@@ -177,12 +177,13 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
         if success:
             # Get total frames from newly created spectrogram
             total_frames = get_spectrogram_frames(str(local_npy_path))
-            
+
             row_dict = row.to_dict()
             row_dict["scientific_name_id"] = sci_to_id[row["scientific_name"]]
             row_dict["spectrogram_filename"] = npy_filename
             row_dict["local_spectrogram_path"] = str(local_npy_path)
             row_dict["total_frames"] = total_frames  # Store frame count
+            row_dict["rc_id"] = xc_id
             processed_rows.append(row_dict)
 
             processed_count += 1
@@ -206,14 +207,14 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
 
         os.makedirs(output_metadata_csv.parent, exist_ok=True)
         final_df = pd.DataFrame(processed_rows)
-        
+
         # Add derived column: number of valid windows per recording
         # This is useful for the sliding window strategy
         final_df["num_windows"] = final_df["total_frames"].apply(
             lambda frames: max(1, (frames - segment_size) // audio_cfg.get("window_stride", 256) + 1)
             if frames > segment_size else 1
         )
-        
+
         final_df.to_csv(output_metadata_csv, index=False)
 
         elapsed_time = time.time() - start_time
@@ -225,7 +226,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
         mean_frames = final_df["total_frames"].mean()
         min_frames = final_df["total_frames"].min()
         max_frames = final_df["total_frames"].max()
-        
+
         print("\n==================================================")
         print("Pipeline Complete")
         print("==================================================")
