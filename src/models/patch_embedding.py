@@ -18,10 +18,11 @@ class SpectrogramPatchEmbedding(nn.Module):
         x: (B, n_mels, time)
         returns: (B, num_patches, embed_dim)
         """
-        print(
-            f"patch_embedding.py SpectrogramPatchEmbedding.forward "
-            f"input: {tuple(x.shape)}"
-        )
+        #print(
+        #    f"patch_embedding.py SpectrogramPatchEmbedding.forward "
+        #    f"input: {tuple(x.shape)}"
+        #)
+
         B, M, T = x.shape
 
         # ensure divisible
