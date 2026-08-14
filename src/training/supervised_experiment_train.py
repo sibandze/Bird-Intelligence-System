@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Tuple, List, Optional
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -24,10 +25,19 @@ from src.training.callbacks import (
     JSONLoggerCallback, CSVLoggerCallback, WandBLoggerCallback
 )
 
+def supervised_val_collate_fn(batch):
+    """
+    Custom collate for validation batches of (x, y, recording_id).
+    Stacks x and y into tensors, but leaves recording_id as a list.
+    """
+    mel_segments, labels, recording_ids = zip(*batch)
+    mel_segments = torch.stack(mel_segments, dim=0)
+    labels = torch.stack(labels, dim=0)
+    return mel_segments, labels, list(recording_ids)
 
 class SupervisedExperimentTrainer:
     """Supervised learning training engine with callback-driven architecture."""
-    
+
     def __init__(self, config: Dict[str, Any], run_dir: Path, callbacks: Optional[List[Callback]] = None):
         self.config = config
         self.run_dir = Path(run_dir)
@@ -71,7 +81,7 @@ class SupervisedExperimentTrainer:
         num_workers = self.config['training']['num_workers']
         segment_size = self.config["audio"]["segment_size"]
 
-        train_df, test_df = train_test_split(
+        train_df, val_df = train_test_split(
             df, test_size=0.2, random_state=42, stratify=df['scientific_name_id']
         )
 
@@ -87,26 +97,41 @@ class SupervisedExperimentTrainer:
             max_db=self.config['audio']['max_db'],
             window_config=window_config,
         )
-        
-        test_dataset = SupervisedBirdSongDataset(
-            df=test_df,
+
+        val_dataset = SupervisedBirdSongDataset(
+            df=val_df,
             segment_size=segment_size,
             train=False,
             label_to_idx=train_dataset.label_to_idx,
             min_db=self.config['audio']['min_db'],
             max_db=self.config['audio']['max_db'],
-            window_config={"strategy": "center"},  # Center window for validation
+            window_config={
+                "strategy": "sliding",
+                "stride": segment_size,   # non-overlapping windows
+            },
+            return_recording_id=True,     # <-- for aggregation
         )
 
         train_loader = DataLoader(
-            train_dataset, batch_size=batch_size, shuffle=True,
-            num_workers=num_workers, pin_memory=(self.device.type == "cuda"), persistent_workers=num_workers > 0
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=(self.device.type == "cuda"),
+            persistent_workers=num_workers > 0,
         )
-        test_loader = DataLoader(
-            test_dataset, batch_size=batch_size, shuffle=False,
-            num_workers=num_workers, pin_memory=(self.device.type == "cuda"), persistent_workers=num_workers > 0
+
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=(self.device.type == "cuda"),
+            persistent_workers=num_workers > 0,
+            collate_fn=supervised_val_collate_fn,
         )
-        return train_loader, test_loader, train_dataset.label_to_idx, train_dataset.idx_to_label
+
+        return train_loader, val_loader, train_dataset.label_to_idx, val_dataset.idx_to_label
 
     def _get_augmentation_config(self) -> Dict:
         """Extract spec augmentation configuration."""
@@ -122,15 +147,15 @@ class SupervisedExperimentTrainer:
 
     def train(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Run supervised training loop."""
-        train_loader, test_loader, label_to_idx, idx_to_label = self.get_dataloaders(df)
+        train_loader, val_loader, label_to_idx, idx_to_label = self.get_dataloaders(df)
         class_names = [idx_to_label[i] for i in range(len(idx_to_label))]
 
-        segment_size = self.config['audio']['segment_size'] 
-        
+        segment_size = self.config['audio']['segment_size']
+
         # Initialize Model
         self.model = SupervisedTransformer(
             config=self.config,
-            device=str(self.device),  
+            device=str(self.device),
             num_classes=len(class_names),
         ).to(self.device)
 
@@ -146,7 +171,7 @@ class SupervisedExperimentTrainer:
         print(f"    Params:    {num_params:,} (Trainable: {trainable_params:,})")
         print(f"    Classes:   {len(class_names)}")
         print(f"    Train samples: {len(train_loader.dataset)}")
-        print(f"    Test samples:  {len(test_loader.dataset)}")
+        print(f"    Test samples:  {len(val_loader.dataset)}")
 
         if compiled:
             self.model = torch.compile(self.model)
@@ -187,7 +212,7 @@ class SupervisedExperimentTrainer:
             if "callbacks_state_dict" in checkpoint:
                 self.cb_runner.load_state_dict(checkpoint["callbacks_state_dict"])
 
-            if "torch_rng_state" in checkpoint: 
+            if "torch_rng_state" in checkpoint:
                 torch.set_rng_state(checkpoint["torch_rng_state"])
             if checkpoint.get("cuda_rng_state") and torch.cuda.is_available():
                 torch.cuda.set_rng_state_all(checkpoint["cuda_rng_state"])
@@ -213,15 +238,15 @@ class SupervisedExperimentTrainer:
             train_loss, train_correct, train_total, epoch_grad_norm, num_batches = 0.0, 0, 0, 0.0, 0
 
             for batch_idx, (mel_segments, labels) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]", leave=False)):
-                if batch_idx == 0:    
-                    print(
-                        f"supervised_experiment_train.py train loop "
-                        f"mel_segments: {tuple(mel_segments.shape)}"
-                    )
-                    print(
-                        f"supervised_experiment_train.py train loop "
-                        f"labels: {tuple(labels.shape)}"
-                    )
+                #if batch_idx == 0:
+                #    print(
+                #        f"supervised_experiment_train.py train loop "
+                #        f"mel_segments: {tuple(mel_segments.shape)}"
+                #    )
+                #    print(
+                #        f"supervised_experiment_train.py train loop "
+                #        f"labels: {tuple(labels.shape)}"
+                #    )
                 batch_start_logs = {"batch": batch_idx}
                 self.cb_runner.on_batch_begin(self, batch_idx, batch_start_logs)
 
@@ -264,33 +289,74 @@ class SupervisedExperimentTrainer:
             # --- Validation Phase ---
             self.cb_runner.on_validation_begin(self)
             self.model.eval()
-            val_loss, val_correct, val_total = 0.0, 0, 0
+            val_loss = 0.0
+            val_correct_window = 0
+            val_total_windows = 0
+
+            # For recording-level aggregation
+            rec_logits = {}   # xc_id -> list of logits tensors
+            rec_labels = {}   # xc_id -> true label
 
             with torch.no_grad():
-                for mel_segments, labels in tqdm(test_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]", leave=False):
-                    if batch_idx == 0:
-                        print(
-                            f"supervised_experiment_train.py validation loop "
-                            f"mel_segments: {tuple(mel_segments.shape)}"
-                        )
-                        print(
-                            f"supervised_experiment_train.py validation loop "
-                            f"labels: {tuple(labels.shape)}"
-                        )
-                    mel_segments, labels = mel_segments.to(self.device), labels.to(self.device)
+                for batch_idx, (mel_segments, labels, recording_ids) in enumerate(
+                    tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]", leave=False)
+                ):
+
+                    # if batch_idx == 0:
+                    #     print(f"validation mel_segments: {tuple(mel_segments.shape)}")
+                    #     print(f"validation labels: {tuple(labels.shape)}")
+                    #     print(f"validation recording_ids: {recording_ids[:5]}")
+
+                    mel_segments = mel_segments.to(self.device)
+                    labels = labels.to(self.device)
+
                     with self.precision.autocast():
                         logits = self.model(mel_segments)
-                        loss = criterion(logits, labels)
 
+                    # Window-level metrics (for reference)
+                    loss = criterion(logits, labels)
                     val_loss += loss.item() * labels.size(0)
                     preds = torch.argmax(logits, dim=1)
-                    val_correct += (preds == labels).sum().item()
-                    val_total += labels.size(0)
+                    val_correct_window += (preds == labels).sum().item()
+                    val_total_windows += labels.size(0)
 
-            avg_val_loss = val_loss / val_total
-            avg_val_acc = val_correct / val_total
+                    # Store per-recording logits and labels
+                    logits_cpu = logits.detach().cpu()
+                    labels_cpu = labels.cpu()
+                    for i, rec_id in enumerate(recording_ids):
+                        # xc_id may be string or int depending on CSV; handle both
+                        rec_id = str(rec_id) if not isinstance(rec_id, str) else rec_id
+                        if rec_id not in rec_logits:
+                            rec_logits[rec_id] = []
+                            rec_labels[rec_id] = labels_cpu[i].item()
+                        rec_logits[rec_id].append(logits_cpu[i])
 
-            val_logs = {"val_loss": avg_val_loss, "val_acc": avg_val_acc}
+            # Compute recording-level metrics
+            val_total_recordings = len(rec_logits)
+            if val_total_recordings > 0:
+                rec_preds = []
+                rec_targets = []
+                rec_losses = []
+                for rec_id, logit_list in rec_logits.items():
+                    mean_logits = torch.stack(logit_list).mean(dim=0)  # [num_classes]
+                    pred = torch.argmax(mean_logits).item()
+                    target = rec_labels[rec_id]
+                    rec_preds.append(pred)
+                    rec_targets.append(target)
+                    # Compute loss on aggregated logits
+                    loss = criterion(mean_logits.unsqueeze(0), torch.tensor([target], device=self.device))
+                    rec_losses.append(loss.item())
+                val_acc = (np.array(rec_preds) == np.array(rec_targets)).mean()
+                avg_val_loss = float(np.mean(rec_losses))
+            else:
+                val_acc = 0.0
+                avg_val_loss = 0.0
+
+            val_logs = {
+                "val_loss": avg_val_loss,           # recording-level loss
+                "val_acc": val_acc,                 # recording-level accuracy
+                "val_window_acc": val_correct_window / val_total_windows,  # window-level for reference
+            }
             self.cb_runner.on_validation_end(self, val_logs)
 
             if self.scheduler and step_frequency == 'epoch':
@@ -306,7 +372,7 @@ class SupervisedExperimentTrainer:
                 'train_loss': train_loss / train_total,
                 'train_acc': train_correct / train_total,
                 'val_loss': avg_val_loss,
-                'val_acc': avg_val_acc,
+                'val_acc': val_acc,
                 'learning_rate': self.optimizer.param_groups[0]["lr"],
                 "precision": self.precision.precision_name(),
                 "loss_scale": self.precision.current_scale(),
@@ -328,7 +394,7 @@ class SupervisedExperimentTrainer:
         # Run Test Evaluation on Best Weights
         best_ckpt = torch.load(self.run_dir / "checkpoint_best.pth", weights_only=False)
         self.model.load_state_dict(best_ckpt["model_state_dict"])
-        metrics = self._evaluate(self.model, test_loader, class_names)
+        metrics = self._evaluate(self.model, val_loader, class_names)
 
         # Trigger Train End Callbacks
         self.cb_runner.on_train_end(self)
@@ -338,15 +404,51 @@ class SupervisedExperimentTrainer:
         """Run evaluation on best model checkpoint."""
         model.eval()
         collector = MetricsCollector(self.run_dir, class_names)
+
+        rec_logits = {}
+        rec_labels = {}
+
         with torch.no_grad():
-            for mel_segments, labels in tqdm(test_loader, desc="Evaluating", leave=False):
+            for batch_idx, (mel_segments, labels, recording_ids) in enumerate(
+                tqdm(test_loader, desc="Evaluating", leave=False)
+            ):
+                # Debug prints (commented out)
+                # if batch_idx == 0:
+                #     print(f"eval mel_segments: {tuple(mel_segments.shape)}")
+                #     print(f"eval labels: {tuple(labels.shape)}")
+                #     print(f"eval recording_ids: {recording_ids[:5]}")
+
                 mel_segments = mel_segments.to(self.device)
                 with self.precision.autocast():
                     logits = model(mel_segments)
-                    probs = torch.softmax(logits, dim=1)
-                    preds = torch.argmax(logits, dim=1)
-                collector.add_batch(preds.cpu().numpy(), labels.numpy(), probs.cpu().numpy())
 
+                logits_cpu = logits.detach().cpu()
+                labels_cpu = labels.cpu()
+                for i, rec_id in enumerate(recording_ids):
+                    rec_id = str(rec_id) if not isinstance(rec_id, str) else rec_id
+                    if rec_id not in rec_logits:
+                        rec_logits[rec_id] = []
+                        rec_labels[rec_id] = labels_cpu[i].item()
+                    rec_logits[rec_id].append(logits_cpu[i])
+
+        # Aggregate per recording
+        all_preds = []
+        all_targets = []
+        all_probs = []
+        for rec_id, logit_list in rec_logits.items():
+            mean_logits = torch.stack(logit_list).mean(dim=0)
+            probs = torch.softmax(mean_logits, dim=0).numpy()
+            pred = int(torch.argmax(mean_logits).item())
+            target = rec_labels[rec_id]
+            all_preds.append(pred)
+            all_targets.append(target)
+            all_probs.append(probs)
+
+        all_preds = np.array(all_preds)
+        all_targets = np.array(all_targets)
+        all_probs = np.array(all_probs)
+
+        collector.add_batch(all_preds, all_targets, all_probs)
         metrics = collector.compute_metrics()
         collector.save_metrics_json()
         collector.plot_confusion_matrix()
