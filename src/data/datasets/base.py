@@ -65,14 +65,14 @@ class BaseSpectrogramDataset(Dataset):
     ) -> int:
         """
         Get total spectrogram frames for a recording.
-        
+
         Uses pre-computed 'total_frames' column from metadata when available.
         Falls back to loading spectrogram header for legacy data.
         """
         # Fast path: use pre-computed frame count from metadata
         if "total_frames" in row and not pd.isna(row["total_frames"]):
             return int(row["total_frames"])
-        
+
         # Legacy fallback: load spectrogram to get shape
         # This should rarely happen if pipeline properly computes total_frames
         mel = load_local_spectrogram(row["local_spectrogram_path"])
@@ -98,9 +98,9 @@ class BaseSpectrogramDataset(Dataset):
         Update the epoch and rebuild temporal sampling.
 
         Training loops should call this once before each epoch.
-        
-        Note for DDP: Call dataset.set_epoch(epoch) alongside 
-        sampler.set_epoch(epoch) to keep window indices synchronized 
+
+        Note for DDP: Call dataset.set_epoch(epoch) alongside
+        sampler.set_epoch(epoch) to keep window indices synchronized
         across distributed processes.
         """
 
@@ -109,33 +109,34 @@ class BaseSpectrogramDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.windows)
-        
+
     def _extract_window_tensor(self, window: WindowIndex) -> torch.Tensor:
         row = self.df.iloc[window.recording_idx]
         mel = load_local_spectrogram(row["local_spectrogram_path"])
-        
-        print(  
-            f"base.py _extract_window_tensor mel_loaded: {tuple(mel.shape)}"
-        )
+
+        #print(
+        #    f"base.py _extract_window_tensor mel_loaded: {tuple(mel.shape)}"
+        #)
+
         mel = self._normalize(mel)
         T = mel.shape[1]
-        
+
         if T <= self.segment_size:
             pad = self.segment_size - T
             mel_crop = np.pad(mel, ((0, 0), (0, pad)), mode="constant", constant_values=0.0).astype(mel.dtype)
-            print(
-                f"base.py _extract_window_tensor mel_crop 1: {tuple(mel_crop.shape)}"
-            )
+            #print(
+            #    f"base.py _extract_window_tensor mel_crop 1: {tuple(mel_crop.shape)}"
+            #)
         else:
             mel_crop = mel[:, window.start_frame:window.end_frame]
-            print(
-                f"base.py _extract_window_tensor mel_crop 2: {tuple(mel_crop.shape)}"
-            )
-        
-        tensor = torch.from_numpy(mel_crop).float() 
-        print(
-            f"base.py _extract_window_tensor output: {tuple(tensor.shape)}"
-        )
+            #print(
+            #    f"base.py _extract_window_tensor mel_crop 2: {tuple(mel_crop.shape)}"
+            #)
+
+        tensor = torch.from_numpy(mel_crop).float()
+        #print(
+        #    f"base.py _extract_window_tensor output: {tuple(tensor.shape)}"
+        #)
         return tensor
 
     def _normalize(
