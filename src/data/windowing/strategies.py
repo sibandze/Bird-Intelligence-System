@@ -27,11 +27,9 @@ class SlidingWindowStrategy(BaseWindowStrategy):
     This allows long recordings to be progressively exposed to the
     model across epochs without increasing dataset size.
     """
-
     def __init__(self, stride: int = 256):
         if stride <= 0:
             raise ValueError(f"Stride must be positive, got {stride}")
-
         self.stride = stride
 
     def _build_starts(
@@ -71,38 +69,35 @@ class SlidingWindowStrategy(BaseWindowStrategy):
         windows = []
 
         for idx, row in df.iterrows():
-
             total_frames = get_frames_fn(row, idx)
-
-            starts = self._build_starts(
-                total_frames=total_frames,
-                segment_size=segment_size,
-            )
+            starts = self._build_starts(total_frames=total_frames, segment_size=segment_size)
 
             if not is_train:
-                # Deterministic center window for validation/test.
-                start = starts[len(starts) // 2]
+                # Validation/test: return every deterministic window
+                for start in starts:
+                    end = min(start + segment_size, total_frames)
+                    windows.append(
+                        WindowIndex(
+                            recording_idx=idx,
+                            start_frame=start,
+                            end_frame=end,
+                        )
+                    )
 
             else:
-                # One temporal window per recording per epoch.
+                # Training: one temporal window per recording per epoch
                 window_idx = epoch % len(starts)
                 start = starts[window_idx]
-
-            end = min(
-                start + segment_size,
-                total_frames,
-            )
-
-            windows.append(
-                WindowIndex(
-                    recording_idx=idx,
-                    start_frame=start,
-                    end_frame=end,
+                end = min(start + segment_size, total_frames)
+                windows.append(
+                    WindowIndex(
+                        recording_idx=idx,
+                        start_frame=start,
+                        end_frame=end,
+                    )
                 )
-            )
 
         return windows
-
 
 class RandomWindowStrategy(BaseWindowStrategy):
     """
