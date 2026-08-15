@@ -27,13 +27,53 @@ from src.training.callbacks import (
 
 def supervised_val_collate_fn(batch):
     """
-    Custom collate for validation batches of (x, y, recording_id).
-    Stacks x and y into tensors, but leaves recording_id as a list.
+    Collate for validation/test batches of (x, y, recording_id).
+    Stacks tensors but keeps recording_ids as a list of strings/ints.
     """
     mel_segments, labels, recording_ids = zip(*batch)
     mel_segments = torch.stack(mel_segments, dim=0)
     labels = torch.stack(labels, dim=0)
     return mel_segments, labels, list(recording_ids)
+
+
+def aggregate_recordings(logits_all, labels_all, recording_ids_all):
+    """
+    Aggregate window-level outputs to recording-level predictions.
+
+    Args:
+        logits_all: tensor of shape [total_windows, num_classes]
+        labels_all: tensor of shape [total_windows]
+        recording_ids_all: list of recording IDs (same length as total_windows)
+
+    Returns:
+        rec_ids: list of unique recording IDs
+        rec_targets: tensor of true labels [num_recordings]
+        rec_logits: tensor of averaged logits [num_recordings, num_classes]
+    """
+    rec_ids = []
+    rec_targets = []
+    rec_logits = []
+
+    # Convert recording_ids to strings for consistent grouping
+    rec_ids_str = [str(r) for r in recording_ids_all]
+
+    unique_ids = []
+    for r in rec_ids_str:
+        if r not in unique_ids:
+            unique_ids.append(r)
+
+    for rec_id in unique_ids:
+        mask = np.array([r == rec_id for r in rec_ids_str])
+        avg_logits = logits_all[mask].mean(dim=0)  # [num_classes]
+        true_label = labels_all[mask][0]           # all same for a recording
+
+        rec_ids.append(rec_id)
+        rec_targets.append(true_label.item())
+        rec_logits.append(avg_logits)
+
+    rec_targets = torch.tensor(rec_targets, dtype=torch.long)
+    rec_logits = torch.stack(rec_logits, dim=0)
+    return rec_ids, rec_targets, rec_logits
 
 class SupervisedExperimentTrainer:
     """Supervised learning training engine with callback-driven architecture."""
@@ -75,17 +115,30 @@ class SupervisedExperimentTrainer:
         """Clean external API for callbacks to trigger early stopping."""
         self.stop_training = True
 
-    def get_dataloaders(self, df: pd.DataFrame) -> Tuple[DataLoader, DataLoader, Dict[str, int], Dict[int, str]]:
-        """Create supervised dataloaders with proper windowing strategies."""
+    def get_dataloaders(self, df: pd.DataFrame):
         batch_size = self.config['training']['batch_size']
         num_workers = self.config['training']['num_workers']
         segment_size = self.config["audio"]["segment_size"]
 
-        train_df, val_df = train_test_split(
-            df, test_size=0.2, random_state=42, stratify=df['scientific_name_id']
+        # Recording-level train/val/test split (70/15/15 by default)
+        test_size = self.config['training'].get('test_size', 0.15)
+        val_size = self.config['training'].get('val_size', 0.15)
+
+        # First split: train + temp
+        train_df, temp_df = train_test_split(
+            df,
+            test_size=(val_size + test_size),
+            random_state=42,
+            stratify=df['scientific_name_id']
+        )
+        # Second split: val + test from temp
+        val_df, test_df = train_test_split(
+            temp_df,
+            test_size=test_size / (val_size + test_size),
+            random_state=42,
+            stratify=temp_df['scientific_name_id']
         )
 
-        # Get windowing config from training config
         window_config = self.config['window']
 
         train_dataset = SupervisedBirdSongDataset(
@@ -107,31 +160,44 @@ class SupervisedExperimentTrainer:
             max_db=self.config['audio']['max_db'],
             window_config={
                 "strategy": "sliding",
-                "stride": segment_size,   # non-overlapping windows
+                "stride": segment_size,   # non-overlapping windows for validation
             },
-            return_recording_id=True,     # <-- for aggregation
+            return_recording_id=True,
+        )
+
+        test_dataset = SupervisedBirdSongDataset(
+            df=test_df,
+            segment_size=segment_size,
+            train=False,
+            label_to_idx=train_dataset.label_to_idx,
+            min_db=self.config['audio']['min_db'],
+            max_db=self.config['audio']['max_db'],
+            window_config={
+                "strategy": "sliding",
+                "stride": segment_size,
+            },
+            return_recording_id=True,
         )
 
         train_loader = DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=num_workers,
-            pin_memory=(self.device.type == "cuda"),
-            persistent_workers=num_workers > 0,
+            train_dataset, batch_size=batch_size, shuffle=True,
+            num_workers=num_workers, pin_memory=(self.device.type == "cuda"),
+            persistent_workers=num_workers > 0
         )
-
         val_loader = DataLoader(
-            val_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=(self.device.type == "cuda"),
+            val_dataset, batch_size=batch_size, shuffle=False,
+            num_workers=num_workers, pin_memory=(self.device.type == "cuda"),
             persistent_workers=num_workers > 0,
-            collate_fn=supervised_val_collate_fn,
+            collate_fn=supervised_val_collate_fn
+        )
+        test_loader = DataLoader(
+            test_dataset, batch_size=batch_size, shuffle=False,
+            num_workers=num_workers, pin_memory=(self.device.type == "cuda"),
+            persistent_workers=num_workers > 0,
+            collate_fn=supervised_val_collate_fn
         )
 
-        return train_loader, val_loader, train_dataset.label_to_idx, val_dataset.idx_to_label
+        return train_loader, val_loader, test_loader, train_dataset.label_to_idx, train_dataset.idx_to_label
 
     def _get_augmentation_config(self) -> Dict:
         """Extract spec augmentation configuration."""
@@ -147,7 +213,7 @@ class SupervisedExperimentTrainer:
 
     def train(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Run supervised training loop."""
-        train_loader, val_loader, label_to_idx, idx_to_label = self.get_dataloaders(df)
+        train_loader, val_loader, test_loader, label_to_idx, idx_to_label = self.get_dataloaders(df)
         class_names = [idx_to_label[i] for i in range(len(idx_to_label))]
 
         segment_size = self.config['audio']['segment_size']
@@ -286,76 +352,70 @@ class SupervisedExperimentTrainer:
                 }
                 self.cb_runner.on_batch_end(self, batch_idx, batch_end_logs)
 
-            # --- Validation Phase ---
-            self.cb_runner.on_validation_begin(self)
-            self.model.eval()
-            val_loss = 0.0
-            val_correct_window = 0
-            val_total_windows = 0
+                # --- Validation Phase ---
+                self.cb_runner.on_validation_begin(self)
+                self.model.eval()
+                val_loss = 0.0
+                val_correct_window = 0
+                val_total_windows = 0
 
-            # For recording-level aggregation
-            rec_logits = {}   # xc_id -> list of logits tensors
-            rec_labels = {}   # xc_id -> true label
+                all_logits = []
+                all_labels = []
+                all_rec_ids = []
 
-            with torch.no_grad():
-                for batch_idx, (mel_segments, labels, recording_ids) in enumerate(
-                    tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]", leave=False)
-                ):
+                with torch.no_grad():
+                    for batch_idx, (mel_segments, labels, recording_ids) in enumerate(
+                        tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]", leave=False)
+                    ):
+                        # Debug prints commented out
+                        # if batch_idx == 0:
+                        #     print(f"validation mel_segments: {tuple(mel_segments.shape)}")
+                        #     print(f"validation labels: {tuple(labels.shape)}")
+                        #     print(f"validation recording_ids: {recording_ids[:5]}")
 
-                    # if batch_idx == 0:
-                    #     print(f"validation mel_segments: {tuple(mel_segments.shape)}")
-                    #     print(f"validation labels: {tuple(labels.shape)}")
-                    #     print(f"validation recording_ids: {recording_ids[:5]}")
+                        mel_segments = mel_segments.to(self.device)
+                        labels = labels.to(self.device)
 
-                    mel_segments = mel_segments.to(self.device)
-                    labels = labels.to(self.device)
+                        with self.precision.autocast():
+                            logits = self.model(mel_segments)
 
-                    with self.precision.autocast():
-                        logits = self.model(mel_segments)
+                        # Window-level metrics
+                        loss = criterion(logits, labels)
+                        val_loss += loss.item() * labels.size(0)
+                        preds = torch.argmax(logits, dim=1)
+                        val_correct_window += (preds == labels).sum().item()
+                        val_total_windows += labels.size(0)
 
-                    # Window-level metrics (for reference)
-                    loss = criterion(logits, labels)
-                    val_loss += loss.item() * labels.size(0)
-                    preds = torch.argmax(logits, dim=1)
-                    val_correct_window += (preds == labels).sum().item()
-                    val_total_windows += labels.size(0)
+                        all_logits.append(logits.detach().cpu())
+                        all_labels.append(labels.cpu())
+                        all_rec_ids.extend(recording_ids)   # recording_ids is a list
 
-                    # Store per-recording logits and labels
-                    logits_cpu = logits.detach().cpu()
-                    labels_cpu = labels.cpu()
-                    for i, rec_id in enumerate(recording_ids):
-                        # xc_id may be string or int depending on CSV; handle both
-                        rec_id = str(rec_id) if not isinstance(rec_id, str) else rec_id
-                        if rec_id not in rec_logits:
-                            rec_logits[rec_id] = []
-                            rec_labels[rec_id] = labels_cpu[i].item()
-                        rec_logits[rec_id].append(logits_cpu[i])
+                # Concatenate
+                all_logits = torch.cat(all_logits, dim=0)
+                all_labels = torch.cat(all_labels, dim=0)
 
-            # Compute recording-level metrics
-            val_total_recordings = len(rec_logits)
-            if val_total_recordings > 0:
-                rec_preds = []
-                rec_targets = []
-                rec_losses = []
-                for rec_id, logit_list in rec_logits.items():
-                    mean_logits = torch.stack(logit_list).mean(dim=0)  # [num_classes]
-                    pred = torch.argmax(mean_logits).item()
-                    target = rec_labels[rec_id]
-                    rec_preds.append(pred)
-                    rec_targets.append(target)
-                    # Compute loss on aggregated logits
-                    loss = criterion(mean_logits.unsqueeze(0), torch.tensor([target], device=self.device))
-                    rec_losses.append(loss.item())
-                val_acc = (np.array(rec_preds) == np.array(rec_targets)).mean()
-                avg_val_loss = float(np.mean(rec_losses))
-            else:
-                val_acc = 0.0
-                avg_val_loss = 0.0
+                # Aggregate to recording level
+                rec_ids, rec_targets, rec_logits = aggregate_recordings(
+                    all_logits, all_labels, all_rec_ids
+                )
+
+                # Recording-level loss and accuracy
+                if len(rec_targets) > 0:
+                    rec_loss = criterion(rec_logits.to(self.device), rec_targets.to(self.device))
+                    avg_val_loss = rec_loss.item()
+                    rec_preds = rec_logits.argmax(dim=1).cpu()
+                    val_acc = (rec_preds == rec_targets).float().mean().item()
+                else:
+                    avg_val_loss = 0.0
+                    val_acc = 0.0
+
+            # Window-level accuracy for diagnostics
+            val_window_acc = val_correct_window / val_total_windows if val_total_windows > 0 else 0.0
 
             val_logs = {
                 "val_loss": avg_val_loss,           # recording-level loss
                 "val_acc": val_acc,                 # recording-level accuracy
-                "val_window_acc": val_correct_window / val_total_windows,  # window-level for reference
+                "val_window_acc": val_window_acc,   # window-level accuracy (for reference)
             }
             self.cb_runner.on_validation_end(self, val_logs)
 
@@ -401,54 +461,42 @@ class SupervisedExperimentTrainer:
         return metrics
 
     def _evaluate(self, model: nn.Module, test_loader: DataLoader, class_names: list) -> Dict:
-        """Run evaluation on best model checkpoint."""
         model.eval()
         collector = MetricsCollector(self.run_dir, class_names)
 
-        rec_logits = {}
-        rec_labels = {}
+        all_logits = []
+        all_labels = []
+        all_rec_ids = []
 
         with torch.no_grad():
             for batch_idx, (mel_segments, labels, recording_ids) in enumerate(
                 tqdm(test_loader, desc="Evaluating", leave=False)
             ):
-                # Debug prints (commented out)
+                # Debug prints commented out
                 # if batch_idx == 0:
                 #     print(f"eval mel_segments: {tuple(mel_segments.shape)}")
                 #     print(f"eval labels: {tuple(labels.shape)}")
                 #     print(f"eval recording_ids: {recording_ids[:5]}")
-
                 mel_segments = mel_segments.to(self.device)
                 with self.precision.autocast():
                     logits = model(mel_segments)
 
-                logits_cpu = logits.detach().cpu()
-                labels_cpu = labels.cpu()
-                for i, rec_id in enumerate(recording_ids):
-                    rec_id = str(rec_id) if not isinstance(rec_id, str) else rec_id
-                    if rec_id not in rec_logits:
-                        rec_logits[rec_id] = []
-                        rec_labels[rec_id] = labels_cpu[i].item()
-                    rec_logits[rec_id].append(logits_cpu[i])
+                all_logits.append(logits.detach().cpu())
+                all_labels.append(labels.cpu())
+                all_rec_ids.extend(recording_ids)
 
-        # Aggregate per recording
-        all_preds = []
-        all_targets = []
-        all_probs = []
-        for rec_id, logit_list in rec_logits.items():
-            mean_logits = torch.stack(logit_list).mean(dim=0)
-            probs = torch.softmax(mean_logits, dim=0).numpy()
-            pred = int(torch.argmax(mean_logits).item())
-            target = rec_labels[rec_id]
-            all_preds.append(pred)
-            all_targets.append(target)
-            all_probs.append(probs)
+        all_logits = torch.cat(all_logits, dim=0)
+        all_labels = torch.cat(all_labels, dim=0)
 
-        all_preds = np.array(all_preds)
-        all_targets = np.array(all_targets)
-        all_probs = np.array(all_probs)
+        rec_ids, rec_targets, rec_logits = aggregate_recordings(
+            all_logits, all_labels, all_rec_ids
+        )
 
-        collector.add_batch(all_preds, all_targets, all_probs)
+        probs = torch.softmax(rec_logits, dim=1).numpy()
+        preds = rec_logits.argmax(dim=1).numpy()
+        targets = rec_targets.numpy()
+
+        collector.add_batch(preds, targets, probs)
         metrics = collector.compute_metrics()
         collector.save_metrics_json()
         collector.plot_confusion_matrix()
