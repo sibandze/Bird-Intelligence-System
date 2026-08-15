@@ -244,6 +244,13 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
         )
 
         final_df.to_csv(output_metadata_csv, index=False)
+        # Print all rows of the final metadata for inspection
+        print("\n--- Final metadata rows ---")
+        for idx, row in final_df.iterrows():
+            print(f"Row {idx}:")
+            for col in final_df.columns:
+                print(f"  {col}: {row[col]}")
+            print("-" * 60)
 
         elapsed_time = time.time() - start_time
         mins, secs = divmod(int(elapsed_time), 60)
