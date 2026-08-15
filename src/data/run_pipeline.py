@@ -57,7 +57,9 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
     df = df.dropna(
         subset=["Download_link", "xc_id", "scientific_name"]
     ).reset_index(drop=True)
-
+    num_dups = df.duplicated(subset=["rc_id"]).sum()
+    print(f"Duplicate rc_id count in final metadata: {num_dups}")
+    return
     # Check config or argument override for full dataset mode
     if use_full_dataset or data_cfg.get("use_full_dataset", False):
         print("🌐 Mode: Full Dataset (No balancing/class filtering)")
