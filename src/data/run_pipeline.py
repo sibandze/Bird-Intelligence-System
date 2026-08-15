@@ -210,9 +210,23 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
 
         # Add derived column: number of valid windows per recording
         # This is useful for the sliding window strategy
+        window_stride = config.get("window", {}).get("stride",
+                                                     audio_cfg.get("window_stride", 256))
+
+        def calculate_num_windows(total_frames: int, segment_size: int, stride: int) -> int:
+            """Match SlidingWindowStrategy._build_starts including forced tail."""
+            if total_frames <= segment_size:
+                return 1
+            max_start = total_frames - segment_size
+            # Number of windows from range(0, max_start+1, stride)
+            base = (max_start // stride) + 1
+            # Add the forced tail window if max_start is not a multiple of stride
+            if max_start % stride != 0:
+                base += 1
+            return base
+
         final_df["num_windows"] = final_df["total_frames"].apply(
-            lambda frames: max(1, (frames - segment_size) // audio_cfg.get("window_stride", 256) + 1)
-            if frames > segment_size else 1
+            lambda frames: calculate_num_windows(frames, segment_size, window_stride)
         )
 
         final_df.to_csv(output_metadata_csv, index=False)
