@@ -67,7 +67,21 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
         top_classes = (
             df["scientific_name"].value_counts().head(num_classes).index.tolist()
         )
+        
+        # Print a table of the top species and their total recording counts
+        print(f"\nTop {num_classes} Species by Recording Count (source metadata):")
+        print("-" * 80)
+        print(f"{'Rank':<5} {'Common Name':<30} {'Scientific Name':<30} {'Recordings':>10}")
+        print("-" * 80)
 
+        top_counts = df["scientific_name"].value_counts().head(num_classes)
+        for rank, (sci_name, count) in enumerate(top_counts.items(), start=1):
+            # Get the first common name associated with this scientific name
+            common_name = df.loc[df["scientific_name"] == sci_name, "common_name"].iloc[0]
+            print(f"{rank:<5} {common_name:<30} {sci_name:<30} {count:>10,}")
+
+        print("-" * 80)
+        
         df_target = pd.DataFrame()
         for sci_name in top_classes:
             class_samples = df[df["scientific_name"] == sci_name].head(
