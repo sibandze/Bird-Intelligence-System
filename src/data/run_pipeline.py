@@ -246,20 +246,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
         )
 
         final_df.to_csv(output_metadata_csv, index=False)
-        # Print all rows of the final metadata for inspection
-        dups = set()
-        num_dups = 0
-        print("\n--- Final metadata rows ---")
-        for idx, row in final_df.iterrows():
-            if row["rc_id"] not in dups:
-                dups.add(row["rc_id"])
-            else:
-                num_dups+=1
-            print(f"Row {idx}:")
-            for col in final_df.columns:
-                print(f"  {col}: {row[col]}")
-            print("-" * 60)
-        print("Duplicates:", num_dups)
+        
         elapsed_time = time.time() - start_time
         mins, secs = divmod(int(elapsed_time), 60)
         hrs, mins = divmod(mins, 60)
