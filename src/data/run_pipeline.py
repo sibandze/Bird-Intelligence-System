@@ -57,9 +57,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
     df = df.dropna(
         subset=["Download_link", "xc_id", "scientific_name"]
     ).reset_index(drop=True)
-    num_dups = df.duplicated(subset=["rc_id"]).sum()
-    print(f"Duplicate rc_id count in final metadata: {num_dups}")
-    return
+    
     # Check config or argument override for full dataset mode
     if use_full_dataset or data_cfg.get("use_full_dataset", False):
         print("🌐 Mode: Full Dataset (No balancing/class filtering)")
@@ -120,12 +118,12 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
     )
 
     for _, row in pbar:
-        xc_id = str(row["xc_id"])
+        rc_id = str(row["xc_id"])
         url = row["Download_link"]
 
-        audio_filename = f"{xc_id}.ogg"
+        audio_filename = f"{rc_id}.ogg"
         npy_filename = (
-            f"{xc_id}_sr{audio_cfg['sr']}_nfft{audio_cfg['n_fft']}"
+            f"{rc_id}_sr{audio_cfg['sr']}_nfft{audio_cfg['n_fft']}"
             f"_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}"
             f"_seg{segment_size}.npy"
         )
@@ -140,6 +138,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
 
             if total_frames > 0:
                 row_dict = row.to_dict()
+                row_dict["rc_id"] = xc_id
                 row_dict["scientific_name_id"] = sci_to_id[row["scientific_name"]]
                 row_dict["spectrogram_filename"] = npy_filename
                 row_dict["local_spectrogram_path"] = str(local_npy_path)
@@ -150,8 +149,9 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
                 pbar.set_postfix(
                     proc=processed_count, skip=skipped_count, fail=failed_count
                 )
+                continue 
             else:
-                tqdm.write(f"⚠️ Corrupted cached spectrogram for {xc_id}, reprocessing...")
+                tqdm.write(f"⚠️ Corrupted cached spectrogram for {rc_id}, reprocessing...")
                 # Fall through to reprocess
                 pass
 
@@ -199,7 +199,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
             row_dict["spectrogram_filename"] = npy_filename
             row_dict["local_spectrogram_path"] = str(local_npy_path)
             row_dict["total_frames"] = total_frames  # Store frame count
-            row_dict["rc_id"] = xc_id
+            row_dict["rc_id"] = rc_id
             processed_rows.append(row_dict)
 
             processed_count += 1
