@@ -25,14 +25,14 @@ model:
 
 training:
   batch_size: 32
-  epochs: 100
+  epochs: 500
   learning_rate: 0.0001
   device: "cuda"  # Options: "cuda", "cpu", "mps"
   num_workers: 2
   weight_decay: 0.01
   gradient_clip: 1.0
   compile_model: false  # Set true to use torch.compile() on PyTorch 2.x
-  patience: 15          # Early stopping patience (epochs without improvement)
+  patience: 50          # Early stopping patience (epochs without improvement)
 
   # === Mixed Precision Configuration ===
   mixed_precision:
