@@ -29,7 +29,13 @@ BASELINE_LEARNING_RATE_SWEEP = HyperparameterSweep(
     name="baseline_lr_sweep",
     description="Sweep over learning rates for baseline model",
     params={
-        "learning_rate": [1e-5, 5e-5, 1e-4, 5e-4, 1e-3],
+        "learning_rate": [
+            #1e-5, 
+            5e-5, 
+            1e-4, 
+            5e-4, 
+            1e-3
+        ],
     }
 )
 
