@@ -138,7 +138,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
 
             if total_frames > 0:
                 row_dict = row.to_dict()
-                row_dict["rc_id"] = xc_id
+                row_dict["rc_id"] = rc_id
                 row_dict["scientific_name_id"] = sci_to_id[row["scientific_name"]]
                 row_dict["spectrogram_filename"] = npy_filename
                 row_dict["local_spectrogram_path"] = str(local_npy_path)
