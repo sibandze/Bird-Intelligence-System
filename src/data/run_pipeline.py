@@ -204,7 +204,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
 
             processed_count += 1
         else:
-            tqdm.write(f"⚠️ Could not create spectrogram for {xc_id}")
+            tqdm.write(f"⚠️ Could not create spectrogram for {rc_id}")
             failed_count += 1
 
         pbar.set_postfix(
