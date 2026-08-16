@@ -161,7 +161,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
                 url, audio_filename, output_dir=str(RAW_AUDIO_DIR)
             )
             if not downloaded_file:
-                tqdm.write(f"⚠️ Failed downloading {xc_id}")
+                tqdm.write(f"⚠️ Failed downloading {rc_id}")
                 failed_count += 1
                 pbar.set_postfix(
                     proc=processed_count, skip=skipped_count, fail=failed_count
