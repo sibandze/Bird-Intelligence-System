@@ -20,6 +20,9 @@ done
 
 # Files/folders to ignore in the tree output
 IGNORE_PATTERNS=(
+  ".vscode"
+  ".venv"
+  "*cache"
   ".git"
   "__pycache__"
   "*.pyc"

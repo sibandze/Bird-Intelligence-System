@@ -220,6 +220,19 @@ data/metadata/
 # Experiment results (can be very large - CSVs, JSONs, reports)
 results/
 experiments/results/
+# BUT keep these from results
+!results/**/*.md
+!results/**/*.png
+!results/**/*.json
+!results/**/*.csv
+!results/**/config.yaml
+
+# Still ignore the heavy stuff
+results/**/best_model.pth
+results/**/checkpoint_*.pth
+results/**/last_model.pth
+results/**/training_log.csv
+results/**/training_metrics.json
 
 # Model checkpoints (large .pth files - typically 100+ MB each)
 checkpoints/
