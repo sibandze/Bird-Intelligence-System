@@ -124,8 +124,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
         audio_filename = f"{rc_id}.ogg"
         npy_filename = (
             f"{rc_id}_sr{audio_cfg['sr']}_nfft{audio_cfg['n_fft']}"
-            f"_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}"
-            f"_seg{segment_size}.npy"
+            f"_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}.npy"
         )
 
         local_audio_path = RAW_AUDIO_DIR / audio_filename
@@ -217,8 +216,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
         tag = "full" if (use_full_dataset or data_cfg.get("use_full_dataset", False)) else "balanced"
         output_metadata_csv = Path(data_cfg["metadata_dir"]) / (
             f"metadata_{tag}_sr{audio_cfg['sr']}_nfft{audio_cfg['n_fft']}"
-            f"_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}"
-            f"_seg{segment_size}.csv"
+            f"_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}.csv"
         )
 
         os.makedirs(output_metadata_csv.parent, exist_ok=True)
