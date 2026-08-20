@@ -87,13 +87,13 @@ def resolve_metadata_csv_path(config):
         raise FileNotFoundError(f"Metadata directory does not exist: {metadata_dir_path}")
 
     audio_cfg = config.get("audio", {})
-    required_keys = ["sr", "n_fft", "hop_length", "n_mels", "segment_size"]
+    required_keys = ["sr", "n_fft", "hop_length", "n_mels"]
     missing = [k for k in required_keys if k not in audio_cfg]
     if missing:
         raise KeyError(f"Missing keys in config['audio']: {missing}")
 
     # Build exact expected filename signature
-    signature = f"sr{audio_cfg['sr']}_nfft{audio_cfg['n_fft']}_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}_seg{audio_cfg['segment_size']}"
+    signature = f"sr{audio_cfg['sr']}_nfft{audio_cfg['n_fft']}_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}"
 
     # We expect the csv to CONTAIN this exact signature as a whole block
     expected_name_part = signature.lower()
