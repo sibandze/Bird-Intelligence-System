@@ -66,6 +66,26 @@ class ExperimentManager:
             
             self.df = pd.read_csv(csv_path)
             print(f"✓ Loaded {len(self.df)} samples from {csv_path}")
+
+            # Remove classes with fewer than 2 samples
+            # (required for stratified train/test split)
+            if 'scientific_name' in df.columns:
+                class_counts = df['scientific_name'].value_counts()
+                valid_classes = class_counts[class_counts >= 2].index
+                num_classes_before = len(class_counts)
+                num_classes_removed = num_classes_before - len(valid_classes)
+                        
+                if num_classes_removed > 0:
+                    df = df[df['scientific_name'].isin(valid_classes)]
+                    print(
+                        f"⚠️ Removed {num_classes_removed} classes with <2 samples; "
+                        f"{len(df)} samples remain."
+                    )
+            else:
+                print("⚠️ 'scientific_name' column not found; no class filtering performed.")
+
+            # Reset index after filtering
+            self.df = df.reset_index(drop=True)
         
         return self.df
 
