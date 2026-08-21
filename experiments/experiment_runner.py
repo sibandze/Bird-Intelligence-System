@@ -85,7 +85,7 @@ class ExperimentManager:
                 print("⚠️ 'scientific_name' column not found; no class filtering performed.")
 
             # Reset index after filtering
-            self.df = df.reset_index(drop=True)
+            self.df = self.df.reset_index(drop=True)
         
         return self.df
 
