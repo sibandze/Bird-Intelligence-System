@@ -119,27 +119,41 @@ class SupervisedExperimentTrainer:
         batch_size = self.config['training']['batch_size']
         num_workers = self.config['training']['num_workers']
         segment_size = self.config["audio"]["segment_size"]
-
+        window_config = self.config['window']
+        
         # Recording-level train/val/test split (70/15/15 by default)
         test_size = self.config['training'].get('test_size', 0.15)
         val_size = self.config['training'].get('val_size', 0.15)
 
-        # First split: train + temp
+        MIN_RECORDINGS_FOR_EVAL = 5
+        
+        counts = df["scientific_name_id"].value_counts()
+        
+        eval_classes = counts[counts >= MIN_RECORDINGS_FOR_EVAL].index
+        rare_classes = counts[counts < MIN_RECORDINGS_FOR_EVAL].index
+        
+        eval_df = df[df["scientific_name_id"].isin(eval_classes)].copy()
+        rare_df = df[df["scientific_name_id"].isin(rare_classes)].copy()
+        
         train_df, temp_df = train_test_split(
-            df,
-            test_size=(val_size + test_size),
+            eval_df,
+            test_size=val_size + test_size,
             random_state=42,
-            stratify=df['scientific_name_id']
+            stratify=eval_df["scientific_name_id"],
         )
-        # Second split: val + test from temp
+        
         val_df, test_df = train_test_split(
             temp_df,
             test_size=test_size / (val_size + test_size),
             random_state=42,
-            stratify=temp_df['scientific_name_id']
+            stratify=temp_df["scientific_name_id"],
         )
-
-        window_config = self.config['window']
+        
+        # Keep all rare recordings for training
+        train_df = pd.concat(
+            [train_df, rare_df],
+            ignore_index=True,
+        )
 
         train_dataset = SupervisedBirdSongDataset(
             df=train_df,
