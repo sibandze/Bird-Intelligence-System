@@ -124,9 +124,15 @@ class SupervisedExperimentTrainer:
         # Recording-level train/val/test split (70/15/15 by default)
         test_size = self.config['training'].get('test_size', 0.15)
         val_size = self.config['training'].get('val_size', 0.15)
-
-        MIN_RECORDINGS_FOR_EVAL = 5
         
+        # Dynamically compute minimum recordings needed per class for evaluation splits
+        min_eval_split = min(val_size, test_size)
+        if min_eval_split <= 0:
+            raise ValueError("val_size and test_size must be > 0")
+            
+        # Required so that each split gets at least one sample per class
+        MIN_RECORDINGS_FOR_EVAL = int(np.ceil(1.0 / min_eval_split)) + 1  # +1 safety margin
+   
         counts = df["scientific_name_id"].value_counts()
         
         eval_classes = counts[counts >= MIN_RECORDINGS_FOR_EVAL].index
