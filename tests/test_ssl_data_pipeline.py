@@ -203,7 +203,7 @@ class TestSpecAugmentation:
         time_means = x_aug[0].mean(dim=0)  # mean over frequencies
         assert (time_means < 1.0).any(), "No time masking applied"
         assert (time_means == 0.0).any(), "No time steps fully zeroed"
-    
+
     def test_disabled_augmentation(self):
         """Disabled SpecAugment should be identity."""
         aug = SpecAugmentation(enabled=False, prob=1.0)
@@ -271,7 +271,7 @@ class TestAugmentationPipeline:
         ])
         pipeline(torch.rand(1, 128, 256))
         assert calls == ['first', 'second']
-    
+
     def test_combined_pipeline(self):
         """Acoustic + SpecAugment should work together."""
         pipeline = AugmentationPipeline([
@@ -533,10 +533,10 @@ class TestDataLoaderIntegration:
     ):
         """set_epoch should be callable on dataset."""
         mock_load.return_value = np.random.randn(128, 500).astype(np.float32)
-        
+
         dataset = SSLBirdSongDataset(df=mock_metadata_df, **base_ssl_config)
         initial_len = len(dataset)
-        
+
         dataset.set_epoch(5)
         assert len(dataset) == initial_len  # Length should not change
         assert dataset.epoch == 5
@@ -626,32 +626,32 @@ class TestSupervisedDataset:
     ):
         """SpecAugment should be applied during training."""
         mock_load.return_value = np.ones((128, 500), dtype=np.float32)
-        
+
         train_dataset = SupervisedBirdSongDataset(
             df=mock_metadata_df,
             train=True,
             spec_aug_config={'enabled': True, 'prob': 1.0, 'time_mask_param': 50},
             **base_ssl_config,
         )
-        
+
         test_dataset = SupervisedBirdSongDataset(
             df=mock_metadata_df,
             train=False,
             spec_aug_config={'enabled': True, 'prob': 1.0, 'time_mask_param': 50},
             **base_ssl_config,
         )
-        
+
         x_train, _ = train_dataset[0]
         x_test, _ = test_dataset[0]
-        
+
         # Test mode should not augment
         assert torch.equal(x_test, torch.ones(128, 256).float())
         # Train mode may augment (prob 1.0)
-    
+
     def test_missing_label_error(self, mock_metadata_df, base_ssl_config):
         """Should raise error if DataFrame has unmapped labels."""
         incomplete_mapping = {'Species_A': 0}  # Missing Species_B
-        
+
         with pytest.raises(ValueError, match='not in label_to_idx'):
             SupervisedBirdSongDataset(
                 df=mock_metadata_df,
