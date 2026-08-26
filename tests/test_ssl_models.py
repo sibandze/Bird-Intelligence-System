@@ -414,7 +414,7 @@ class TestProjectionHead:
         h = torch.randn(4, 512)
         z = head(h)
         assert z.shape == (4, 256)
-    
+
     def test_batch_size_independence(self, projection_head):
         """Should work with different batch sizes."""
         projection_head.eval()
@@ -422,34 +422,34 @@ class TestProjectionHead:
             h = torch.randn(B, 512)
             z = projection_head(h)
             assert z.shape == (B, 128)
-    
+
     def test_gradient_flow(self, projection_head, sample_embeddings):
         """Gradients should flow through projection head."""
         z = projection_head(sample_embeddings)
         loss = z.sum()
         loss.backward()
-        
+
         for name, param in projection_head.named_parameters():
             assert param.grad is not None, f"No gradient for {name}"
-    
+
     def test_output_different_from_input(self, projection_head, sample_embeddings):
         """Projection should transform input."""
         h1, h2 = torch.randn(2, 512), torch.randn(2, 512)
         z1, z2 = projection_head(h1), projection_head(h2)
-        
+
         # Different inputs -> different outputs
         assert not torch.allclose(z1, z2)
-    
+
     def test_batchnorm_training_mode(self, projection_head):
         """BatchNorm should behave differently in train vs eval."""
         h = torch.randn(4, 512)
-        
+
         projection_head.train()
         z_train = projection_head(h)
-        
+
         projection_head.eval()
         z_eval = projection_head(h)
-        
+
         # Should produce different results in different modes
         # (especially with small batch size where running stats dominate)
         assert z_train.shape == z_eval.shape
@@ -461,7 +461,7 @@ class TestProjectionHead:
 
 class TestSimCLRLoss:
     """Test contrastive loss functions."""
-    
+
     @pytest.fixture
     def normalized_projections(self):
         """Create normalized projections for loss testing."""
@@ -471,13 +471,13 @@ class TestSimCLRLoss:
         z1 = z[:2]  # [2, 128]
         z2 = z[2:]  # [2, 128]
         return z1, z2
-    
+
     def test_loss_is_positive(self, simclr_model, normalized_projections):
         """Contrastive loss should be non-negative."""
         z1, z2 = normalized_projections
         loss = simclr_model.nt_xent_loss(z1, z2)
         assert loss.item() >= 0
-    
+
     def test_loss_decreases_for_similar_pairs(self, simclr_model):
         """Loss should decrease when positive pairs are more similar."""
         # Create highly similar positive pairs
@@ -485,40 +485,40 @@ class TestSimCLRLoss:
         z1_close = z_base[:2]
         z2_close = z_base[:2] + 0.01 * torch.randn(2, 128)
         z2_close = F.normalize(z2_close, dim=1)
-        
+
         # Create dissimilar pairs
         z1_far = z_base[:2]
         z2_far = F.normalize(torch.randn(2, 128), dim=1)
-        
+
         loss_close = simclr_model.nt_xent_loss(z1_close, z2_close)
         loss_far = simclr_model.nt_xent_loss(z1_far, z2_far)
-        
+
         # Similar pairs should have lower loss
         assert loss_close.item() < loss_far.item(), \
             f"close={loss_close.item():.4f}, far={loss_far.item():.4f}"
-    
+
     def test_loss_symmetry(self, simclr_model, normalized_projections):
         """Loss should be symmetric: L(z1, z2) = L(z2, z1)."""
         z1, z2 = normalized_projections
         loss_12 = simclr_model.nt_xent_loss(z1, z2)
         loss_21 = simclr_model.nt_xent_loss(z2, z1)
         assert torch.allclose(loss_12, loss_21, atol=1e-6)
-    
+
     def test_temperature_effect(self, simclr_model, normalized_projections):
         """Lower temperature produces higher loss for imperfect pairs (sharper distribution)."""
         z1, z2 = normalized_projections
-        
+
         model_low_temp = SimCLR(n_mels=128, embed_dim=512, temperature=0.05)
         model_high_temp = SimCLR(n_mels=128, embed_dim=512, temperature=0.5)
-        
+
         loss_low = model_low_temp.nt_xent_loss(z1.clone(), z2.clone())
         loss_high = model_high_temp.nt_xent_loss(z1.clone(), z2.clone())
-        
+
         # Both should be valid losses
         assert loss_low.item() >= 0
         assert loss_high.item() >= 0
         # With small batch (2 samples), temperature effect may not hold monotonically
-        # Just verify they're different 
+        # Just verify they're different
         assert loss_low.item() != loss_high.item(), \
               f"Temperature should affect loss: both are {loss_low.item():.4f}"
 
@@ -527,28 +527,28 @@ class TestSimCLRLoss:
         z = F.normalize(torch.randn(2, 128), dim=1)
         z1 = z.clone()
         z2 = z.clone()
-        
+
         loss = simclr_model.nt_xent_loss(z1, z2)
-        
+
         # For perfect pairs, loss should be very low (effectively 0 with large batch)
         # With batch_size=2, the positive is also the negative (only other sample)
         # So loss > 0 but should be low relative to random
         assert loss.item() < 1.0  # Upper bound check
-    
+
     def test_nt_xent_vs_info_nce(self, simclr_model, normalized_projections):
         """nt_xent_loss and info_nce_loss should produce identical results."""
         z1, z2 = normalized_projections
-        
+
         loss_nt_xent = simclr_model.nt_xent_loss(z1.clone(), z2.clone())
         loss_info_nce = simclr_model.info_nce_loss(z1.clone(), z2.clone())
-        
+
         assert torch.allclose(loss_nt_xent, loss_info_nce, atol=1e-5), \
             f"nt_xent={loss_nt_xent.item():.6f}, info_nce={loss_info_nce.item():.6f}"
-    
+
     def test_standalone_loss_function(self, normalized_projections):
         """Standalone loss function should match class method."""
         z1, z2 = normalized_projections
-        
+
         model = SimCLR(n_mels=128, embed_dim=512, temperature=0.07)
         loss_class = model.nt_xent_loss(z1.clone(), z2.clone())
         loss_standalone = nt_xent_loss_standalone(z1.clone(), z2.clone(), temperature=0.07)
@@ -673,16 +673,16 @@ class TestSimCLRModel:
 
 class TestDataModelIntegration:
     """Integration tests connecting data pipeline to model."""
-    
+
     @patch('src.data.datasets.base.load_local_spectrogram')
     def test_dataset_to_model_flow(
         self, mock_load, mock_metadata_df, base_ssl_config, simclr_model,
     ):
         """Full flow from dataset to model output."""
         from torch.utils.data import DataLoader
-        
+
         mock_load.return_value = np.random.randn(128, 500).astype(np.float32)
-        
+
         dataset = SimCLRDataset(df=mock_metadata_df, **base_ssl_config)
         loader = DataLoader(
             dataset,
@@ -690,14 +690,14 @@ class TestDataModelIntegration:
             shuffle=False,
             collate_fn=simclr_collate_fn,
         )
-        
+
         for x1, x2 in loader:
             loss, acc = simclr_model.training_step(x1, x2)
             assert loss.dim() == 0
             assert acc.dim() == 0
             assert loss.item() >= 0
             break
-    
+
     @patch('src.data.datasets.base.load_local_spectrogram')
     def test_encode_for_downstream(
         self, mock_load, mock_metadata_df, base_ssl_config, simclr_model,
@@ -705,11 +705,11 @@ class TestDataModelIntegration:
         """Encoder embeddings should be extractable for downstream tasks."""
         simclr_model.eval()
         mock_load.return_value = np.random.randn(128, 500).astype(np.float32)
-        
+
         dataset = SSLBirdSongDataset(df=mock_metadata_df, **base_ssl_config)
         x, _ = dataset[0]
         x = x.unsqueeze(0)  # Add batch dim
-        
+
         h = simclr_model.encode(x)
         assert h.shape == (1, 512)
         # Embedding should NOT be normalized (raw representation)
