@@ -7,9 +7,10 @@ import torch.nn.functional as F
 
 class CNNEncoder(nn.Module):
     """
-    CNN encoder for spectrogram inputs.
+    CNN encoder for mel spectrogram inputs.
 
-    Takes mel spectrograms of shape [B, 1, n_mels, time]
+    Takes mel spectrograms of shape [B, n_mels, time],
+    then internnally adds single channel dimmension for Conv2d
     and produces embeddings in multiple formats:
 
     - forward(): Pooled 1D embedding [B, embed_dim] (for classification/SSL)
@@ -145,7 +146,7 @@ class CNNEncoder(nn.Module):
         of temporal tokens.
 
         Args:
-            x: Mel spectrogram [B, 1, n_mels, time_steps]
+            x: Mel spectrogram [B, n_mels, time_steps]
 
         Returns:
             Token sequence [B, S, D] where:
@@ -165,7 +166,7 @@ class CNNEncoder(nn.Module):
         then projects to embed_dim.
 
         Args:
-            x: Mel spectrogram [B, 1, n_mels, time_steps]
+            x: Mel spectrogram [B, n_mels, time_steps]
 
         Returns:
             h: Embedding [B, embed_dim]
