@@ -353,7 +353,7 @@ class TestSSLBirdSongDataset:
         )
         
         x1, x2 = dataset[0]
-        expected_shape = (1, 128, base_ssl_config['audio']['segment_size'])
+        expected_shape = (1, 128, base_ssl_config['segment_size'])
         assert x1.shape == expected_shape, f"Expected {expected_shape}, got {x1.shape}"
         assert x2.shape == expected_shape
     
@@ -379,14 +379,14 @@ class TestSSLBirdSongDataset:
         # Windows should be different between epochs
         assert windows_epoch0 != windows_epoch1, \
             "Sliding windows should change between epochs"
-    
+
     @patch('src.data.datasets.base.load_local_spectrogram')
     def test_window_strategies(self, mock_load, mock_metadata_df, base_ssl_config):
         """Test different window strategies produce correct indices."""
         mel = np.random.randn(128, 800).astype(np.float32)
         mock_load.return_value = mel
         segment_size = base_ssl_config['segment_size']
-        
+
         for strategy, config in [
             ('random', {'strategy': 'random'}),
             ('center', {'strategy': 'center'}),
@@ -398,11 +398,11 @@ class TestSSLBirdSongDataset:
                 **base_ssl_config,
             )
             assert len(dataset) == len(mock_metadata_df)
-            
+
             for window in dataset.windows:
                 assert window.end_frame - window.start_frame == segment_size or \
                        window.end_frame <= mel.shape[1]
-    
+
     @patch('src.data.datasets.base.load_local_spectrogram')
     def test_short_spectrogram_padding(
         self, mock_load, mock_metadata_df, base_ssl_config,
@@ -410,15 +410,15 @@ class TestSSLBirdSongDataset:
         """Spectrograms shorter than segment_size should be padded."""
         short_mel = np.random.randn(128, 100).astype(np.float32)  # < 256
         mock_load.return_value = short_mel
-        
+
         dataset = SSLBirdSongDataset(
             df=mock_metadata_df,
             **base_ssl_config,
         )
-        
+
         x1, x2 = dataset[0]
-        assert x1.shape == (1, 128, base_ssl_config['segment_size'])
-    
+        assert x1.shape == (128, base_ssl_config['segment_size'])
+
     @patch('src.data.datasets.base.load_local_spectrogram')
     def test_precomputed_total_frames(
         self, mock_load, mock_metadata_df, base_ssl_config,
@@ -428,7 +428,7 @@ class TestSSLBirdSongDataset:
             df=mock_metadata_df,
             **base_ssl_config,
         )
-        
+
         # _get_total_frames should use precomputed value
         row = mock_metadata_df.iloc[0]
         frames = dataset._get_total_frames(row, 0)
