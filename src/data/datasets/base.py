@@ -12,7 +12,7 @@ from ..windowing import (
     BaseWindowStrategy,
     WindowIndex,
 )
-from ..augmentations import SpecAugmentation
+from ..augmentations import SpecAugmentation, AugmentationPipeline
 
 
 class BaseSpectrogramDataset(Dataset):
@@ -32,7 +32,6 @@ class BaseSpectrogramDataset(Dataset):
         max_db: float,
         train: bool = True,
         window_config: dict = None,
-        spec_aug_config: dict = None,
     ):
         self.df = df.reset_index(drop=True)
         self.segment_size = segment_size
@@ -41,18 +40,10 @@ class BaseSpectrogramDataset(Dataset):
         self.train = train
         self.epoch = 0
 
-        # Initialize spec augmentation
-        spec_cfg = spec_aug_config or {"enabled": False}
-        self.spec_aug = SpecAugmentation(
-            enabled=spec_cfg.get("enabled", False),
-            prob=spec_cfg.get("prob", 0.5),
-            num_freq_masks=spec_cfg.get("num_freq_masks", 1),
-            freq_mask_param=spec_cfg.get("freq_mask_param", 0),
-            num_time_masks=spec_cfg.get("num_time_masks", 1),
-            time_mask_param=spec_cfg.get("time_mask_param", 0),
-        )
+        # Initialize augmentation pipeline
+        self.aug_pipeline = AugmentationPipeline()
 
-        self.window_strategy: BaseWindowStrategy = (
+         self.window_strategy: BaseWindowStrategy = (
             build_window_strategy(window_config)
         )
 
@@ -154,12 +145,3 @@ class BaseSpectrogramDataset(Dataset):
             (mel - self.min_db)
             / (self.max_db - self.min_db)
         )
-
-    def _apply_spec_augment(
-        self,
-        mel_tensor: torch.Tensor,
-    ) -> torch.Tensor:
-        """Apply spec augmentation (delegates to SpecAugmentation instance)."""
-        if self.train:
-            return self.spec_aug(mel_tensor)
-        return mel_tensor
