@@ -13,7 +13,6 @@ class SSLBirdSongDataset(BaseSpectrogramDataset):
     Additional parameters (beyond those of BaseSpectrogramDataset):
         acoustic_aug_config: dict or None – configuration for acoustic augmentation.
         spec_aug_config: dict or None – configuration for spectrogram augmentation
-                           (used in the SSL pipeline, independent of the base's spec_aug).
         apply_augmentation: bool – whether to apply the augmentation pipeline.
     All other arguments are passed directly to BaseSpectrogramDataset via **kwargs.
     """
