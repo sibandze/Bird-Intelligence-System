@@ -43,7 +43,7 @@ class BaseSpectrogramDataset(Dataset):
         # Initialize augmentation pipeline
         self.aug_pipeline = AugmentationPipeline()
 
-         self.window_strategy: BaseWindowStrategy = (
+        self.window_strategy: BaseWindowStrategy = (
             build_window_strategy(window_config)
         )
 
