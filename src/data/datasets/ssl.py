@@ -27,8 +27,6 @@ class SSLBirdSongDataset(BaseSpectrogramDataset):
         super().__init__(**kwargs)
 
         self.apply_augmentation = apply_augmentation
-        # Initialize augmentation pipeline
-        self.aug_pipeline = AugmentationPipeline()
 
         # Add acoustic augmentations
         acoustic_cfg = acoustic_aug_config or {"enabled": True, "noise_level": 0.05}
