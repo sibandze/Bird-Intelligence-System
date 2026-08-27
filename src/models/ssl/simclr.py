@@ -178,8 +178,8 @@ class SimCLR(nn.Module):
         Single training step returning loss and accuracy.
 
         Args:
-            x1: First augmented views [B, 1, n_mels, time]
-            x2: Second augmented views [B, 1, n_mels, time]
+            x1: First augmented views [B, n_mels, time]
+            x2: Second augmented views [B, n_mels, time]
 
         Returns:
             loss: NT-Xent loss
