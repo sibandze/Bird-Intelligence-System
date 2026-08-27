@@ -102,7 +102,7 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
             label_counts[label_idx] += 1
         return dict(label_counts)
 
-    def self._apply_augmentation(
+    def _apply_augmentation(
         self,
         mel_tensor: torch.Tensor,
     ) -> torch.Tensor:
