@@ -3,6 +3,7 @@
 import pandas as pd
 import torch
 from .base import BaseSpectrogramDataset
+from ..augmentations import SpecAugmentation
 from collections import Counter
 
 class SupervisedBirdSongDataset(BaseSpectrogramDataset):
@@ -25,10 +26,10 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
             df=df,
             **kwargs,
         )
-        
+
         # Initialize spec augmentation
         spec_cfg = spec_aug_config or {"enabled": False}
-        self.augmentation_pipeline.add(
+        self.aug_pipeline.add(
             SpecAugmentation(
                 enabled=spec_cfg.get("enabled", False),
                 prob=spec_cfg.get("prob", 0.5),
@@ -38,7 +39,7 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
                 time_mask_param=spec_cfg.get("time_mask_param", 0),
             )
         )
-        
+
         if label_to_idx is None:
             # Build mapping from unique species in the dataframe
             species_df = (
@@ -107,5 +108,5 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
     ) -> torch.Tensor:
         """Apply spec augmentation (delegates to SpecAugmentation instance)."""
         if self.train:
-            return self.augmentation_pipeline(mel_tensor)
+            return self.aug_pipeline(mel_tensor)
         return mel_tensor
