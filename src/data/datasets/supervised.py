@@ -16,18 +16,12 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
     def __init__(
         self,
         df: pd.DataFrame,
-        segment_size: int,
-        min_db: float,
-        max_db: float,
         label_to_idx: dict = None,
         return_recording_id: bool = False,
         **kwargs,
     ):
         super().__init__(
             df=df,
-            segment_size=segment_size,
-            min_db=min_db,
-            max_db=max_db,
             **kwargs,
         )
 
