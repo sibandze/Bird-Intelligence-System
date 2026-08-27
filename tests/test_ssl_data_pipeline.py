@@ -333,6 +333,7 @@ class TestSSLBirdSongDataset:
             df=mock_metadata_df,
             acoustic_aug_config={'enabled': True, 'noise_level': 0.1},
             spec_aug_config={'enabled': True, 'prob': 1.0},
+            apply_augmentation=True,
             **base_ssl_config,
         )
 
