@@ -21,7 +21,7 @@ class SSLBirdSongDataset(BaseSpectrogramDataset):
         self,
         acoustic_aug_config: dict = None,
         spec_aug_config: dict = None,
-        apply_augmentation: bool = False,
+        apply_augmentation: bool = True,
         **kwargs,
     ):
         super().__init__(**kwargs)
