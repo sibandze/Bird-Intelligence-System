@@ -18,13 +18,27 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
         df: pd.DataFrame,
         label_to_idx: dict = None,
         return_recording_id: bool = False,
+        spec_aug_config: dict = None,
         **kwargs,
     ):
         super().__init__(
             df=df,
             **kwargs,
         )
-
+        
+        # Initialize spec augmentation
+        spec_cfg = spec_aug_config or {"enabled": False}
+        self.augmentation_pipeline.add(
+            SpecAugmentation(
+                enabled=spec_cfg.get("enabled", False),
+                prob=spec_cfg.get("prob", 0.5),
+                num_freq_masks=spec_cfg.get("num_freq_masks", 1),
+                freq_mask_param=spec_cfg.get("freq_mask_param", 0),
+                num_time_masks=spec_cfg.get("num_time_masks", 1),
+                time_mask_param=spec_cfg.get("time_mask_param", 0),
+            )
+        )
+        
         if label_to_idx is None:
             # Build mapping from unique species in the dataframe
             species_df = (
@@ -86,3 +100,12 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
             label_idx = self.label_to_idx[row["scientific_name"]]
             label_counts[label_idx] += 1
         return dict(label_counts)
+
+    def _apply_spec_augment(
+        self,
+        mel_tensor: torch.Tensor,
+    ) -> torch.Tensor:
+        """Apply spec augmentation (delegates to SpecAugmentation instance)."""
+        if self.train:
+            return self.augmentation_pipeline(mel_tensor)
+        return mel_tensor
