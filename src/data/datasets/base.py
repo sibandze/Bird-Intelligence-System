@@ -12,7 +12,7 @@ from ..windowing import (
     BaseWindowStrategy,
     WindowIndex,
 )
-from ..augmentations import SpecAugmentation, AugmentationPipeline
+from ..augmentations import AugmentationPipeline
 
 
 class BaseSpectrogramDataset(Dataset):
