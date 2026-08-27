@@ -73,7 +73,7 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
         window = self.windows[idx]
 
         x = self._extract_window_tensor(window)
-        x = self._apply_spec_augment(x)
+        x = self._apply_augmentation(x)
 
         row = self.df.iloc[window.recording_idx]
 
@@ -102,11 +102,11 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
             label_counts[label_idx] += 1
         return dict(label_counts)
 
-    def _apply_spec_augment(
+    def self._apply_augmentation(
         self,
         mel_tensor: torch.Tensor,
     ) -> torch.Tensor:
-        """Apply spec augmentation (delegates to SpecAugmentation instance)."""
+        """Apply augmentation (delegates to AugmentationPipeline instance)."""
         if self.train:
             return self.aug_pipeline(mel_tensor)
         return mel_tensor
