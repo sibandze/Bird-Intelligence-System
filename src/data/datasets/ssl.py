@@ -1,6 +1,5 @@
 # src/data/datasets/ssl.py
 
-import pandas as pd
 import torch
 from .base import BaseSpectrogramDataset
 from ..augmentations import AcousticAugmentation, SpecAugmentation, AugmentationPipeline
@@ -10,28 +9,27 @@ class SSLBirdSongDataset(BaseSpectrogramDataset):
     """
     Base SSL dataset producing dual augmented views (x1, x2)
     from the SAME WindowIndex entry.
+
+    Additional parameters (beyond those of BaseSpectrogramDataset):
+        acoustic_aug_config: dict or None – configuration for acoustic augmentation.
+        spec_aug_config: dict or None – configuration for spectrogram augmentation
+                           (used in the SSL pipeline, independent of the base's spec_aug).
+        apply_augmentation: bool – whether to apply the augmentation pipeline.
+    All other arguments are passed directly to BaseSpectrogramDataset via **kwargs.
     """
     def __init__(
         self,
-        df: pd.DataFrame,
-        segment_size: int,
-        min_db: float,
-        max_db: float,
         acoustic_aug_config: dict = None,
         spec_aug_config: dict = None,
+        apply_augmentation: bool = False,
         **kwargs,
     ):
-        super().__init__(
-            df=df,
-            segment_size=segment_size,
-            min_db=min_db,
-            max_db=max_db,
-            **kwargs,
-        )
-        
+        super().__init__(**kwargs)
+
+        self.apply_augmentation = apply_augmentation
         # Initialize augmentation pipeline
         self.aug_pipeline = AugmentationPipeline()
-        
+
         # Add acoustic augmentations
         acoustic_cfg = acoustic_aug_config or {"enabled": True, "noise_level": 0.05}
         self.aug_pipeline.add(
@@ -41,7 +39,7 @@ class SSLBirdSongDataset(BaseSpectrogramDataset):
                 noise_prob=acoustic_cfg.get("noise_prob", 1.0),
             )
         )
-        
+
         # Add spectrogram augmentations
         spec_cfg = spec_aug_config or {"enabled": True}
         self.aug_pipeline.add(
@@ -58,7 +56,7 @@ class SSLBirdSongDataset(BaseSpectrogramDataset):
     def _generate_view(self, window) -> torch.Tensor:
         """Generate a single augmented view from a window."""
         view = self._extract_window_tensor(window)
-        if self.train:
+        if self.apply_augmentation:
             view = self.aug_pipeline(view)
         return view
 
@@ -67,7 +65,6 @@ class SSLBirdSongDataset(BaseSpectrogramDataset):
         x1 = self._generate_view(window)
         x2 = self._generate_view(window)
         return x1, x2
-
 
 # ---------------------------------------------------------------------
 # Framework Adapters & Collate Functions
@@ -88,7 +85,7 @@ class MoCoDataset(SSLBirdSongDataset):
 def _ssl_dual_view_collate(batch):
     """
     Base collate for all dual-view SSL methods.
-    
+
     Input:  batch = [(x1, x2), (x1, x2), ...] where x is [1, F, T]
     Output: (x1_batch, x2_batch) where each is [B, 1, F, T]
     """
@@ -100,5 +97,5 @@ def _ssl_dual_view_collate(batch):
 # Framework-specific aliases
 # Keep separate names so we can extend them later without breaking API
 simclr_collate_fn = _ssl_dual_view_collate
-byol_collate_fn = _ssl_dual_view_collate  
+byol_collate_fn = _ssl_dual_view_collate
 moco_collate_fn = _ssl_dual_view_collate
