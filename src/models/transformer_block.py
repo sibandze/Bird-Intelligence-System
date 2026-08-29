@@ -3,6 +3,7 @@
 import torch.nn as nn
 from .self_attention import SelfAttention
 
+
 class TransformerBlock(nn.Module):
     def __init__(self, embed_size, heads, dropout, forward_expansion):
         """
@@ -14,7 +15,6 @@ class TransformerBlock(nn.Module):
         """
         super(TransformerBlock, self).__init__()
 
-        # 1. Modified: Pass dropout to SelfAttention
         self.attention = SelfAttention(embed_size, heads, dropout=dropout)
 
         # Layer Normalization for both sub-layers
@@ -22,10 +22,9 @@ class TransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(embed_size)
 
         # Feed Forward Network (Position-wise)
-        # 2. Modified: Changed nn.ReLU() to nn.GELU()
         self.feed_forward = nn.Sequential(
             nn.Linear(embed_size, forward_expansion * embed_size),
-            nn.GELU(), 
+            nn.GELU(),
             nn.Linear(forward_expansion * embed_size, embed_size),
         )
 
