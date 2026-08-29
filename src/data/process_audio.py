@@ -7,7 +7,10 @@ import librosa.display
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-def generate_mel_spectrogram_data(audio_path, sr=32000, n_fft=2048, hop_length=512, n_mels=128):
+
+def generate_mel_spectrogram_data(
+    audio_path, sr=32000, n_fft=2048, hop_length=512, n_mels=128
+):
     """
     Loads an audio file and generates its Mel spectrogram data.
 
@@ -27,7 +30,9 @@ def generate_mel_spectrogram_data(audio_path, sr=32000, n_fft=2048, hop_length=5
         y, sr_loaded = librosa.load(audio_path, sr=sr)
 
         # Compute the Mel spectrogram
-        mel_spectrogram = librosa.feature.melspectrogram(y=y, sr=sr_loaded, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels)
+        mel_spectrogram = librosa.feature.melspectrogram(
+            y=y, sr=sr_loaded, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels
+        )
 
         # Convert to dB scale
         mel_spectrogram_db = librosa.power_to_db(mel_spectrogram, ref=np.max)
@@ -50,7 +55,10 @@ def save_spectrogram_npy(spectrogram_data, out_path):
     np.save(out_path, spectrogram_data)
     return out_path
 
-def preprocess_and_save(audio_path, out_path, sr=32000, n_fft=2048, hop_length=512, n_mels=128):
+
+def preprocess_and_save(
+    audio_path, out_path, sr=32000, n_fft=2048, hop_length=512, n_mels=128
+):
     """
     Load audio -> mel spectrogram -> save as .npy
     Just wraps the 2 functions above, no reimplementation.
@@ -67,6 +75,7 @@ def preprocess_and_save(audio_path, out_path, sr=32000, n_fft=2048, hop_length=5
     save_spectrogram_npy(mel_db, out_path)
     return True
 
+
 def load_local_spectrogram(npy_path):
     """
     Load spectrogram.npy from disk.
@@ -78,7 +87,10 @@ def load_local_spectrogram(npy_path):
         raise FileNotFoundError(f"Spectrogram not found: {npy_path}")
     return np.load(npy_path)
 
-def visualize_mel_spectrogram(spectrogram_data, sr, title='Mel Spectrogram', hop_length=512):
+
+def visualize_mel_spectrogram(
+    spectrogram_data, sr, title="Mel Spectrogram", hop_length=512
+):
     """
     Visualizes a Mel spectrogram numpy array.
 
@@ -89,11 +101,14 @@ def visualize_mel_spectrogram(spectrogram_data, sr, title='Mel Spectrogram', hop
         hop_length (int): Number of samples between successive frames.
     """
     plt.figure(figsize=(10, 4))
-    librosa.display.specshow(spectrogram_data, sr=sr, x_axis='time', y_axis='mel', hop_length=hop_length)
-    plt.colorbar(format='%+2.0f dB')
+    librosa.display.specshow(
+        spectrogram_data, sr=sr, x_axis="time", y_axis="mel", hop_length=hop_length
+    )
+    plt.colorbar(format="%+2.0f dB")
     plt.title(title)
     plt.tight_layout()
     plt.show()
+
 
 def save_spectrogram_image(spectrogram_data, sr, output_path, hop_length=512):
     """
@@ -106,9 +121,11 @@ def save_spectrogram_image(spectrogram_data, sr, output_path, hop_length=512):
         hop_length (int): Number of samples between successive frames.
     """
     plt.figure(figsize=(10, 4))
-    librosa.display.specshow(spectrogram_data, sr=sr, x_axis='time', y_axis='mel', hop_length=hop_length)
-    plt.colorbar(format='%+2.0f dB')
-    plt.title('Mel Spectrogram')
+    librosa.display.specshow(
+        spectrogram_data, sr=sr, x_axis="time", y_axis="mel", hop_length=hop_length
+    )
+    plt.colorbar(format="%+2.0f dB")
+    plt.title("Mel Spectrogram")
     plt.tight_layout()
     plt.savefig(output_path)
     plt.close()
