@@ -6,6 +6,7 @@ from .base import BaseSpectrogramDataset
 from ..augmentations import SpecAugmentation
 from collections import Counter
 
+
 class SupervisedBirdSongDataset(BaseSpectrogramDataset):
     """
     Supervised learning dataset returning (x, y) for each WindowIndex entry.
@@ -43,9 +44,9 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
         if label_to_idx is None:
             # Build mapping from unique species in the dataframe
             species_df = (
-                df[['scientific_name_id', 'scientific_name']]
+                df[["scientific_name_id", "scientific_name"]]
                 .drop_duplicates()
-                .sort_values('scientific_name_id')
+                .sort_values("scientific_name_id")
             )
             # Map scientific_name → contiguous 0-indexed label
             self.label_to_idx = {
@@ -60,7 +61,7 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
         self.num_classes = len(self.label_to_idx)
 
         # Validate that all labels in df exist in mapping
-        df_labels = set(df['scientific_name'].unique())
+        df_labels = set(df["scientific_name"].unique())
         mapped_labels = set(self.label_to_idx.keys())
         missing_labels = df_labels - mapped_labels
         if missing_labels:
@@ -84,7 +85,7 @@ class SupervisedBirdSongDataset(BaseSpectrogramDataset):
             dtype=torch.long,
         )
         if self.return_recording_id:
-            return x, y, row['rc_id']
+            return x, y, row["rc_id"]
         return x, y
 
     def get_label_distribution(self) -> dict:
