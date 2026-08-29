@@ -17,28 +17,36 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional
 import torch
-
-try:
-    import wandb
-except ImportError:
-    wandb = None
+import wandb
 
 
 class Callback:
     """Base class for all training callbacks."""
-    
+
     # --- Lifecycle Hooks ---
-    def on_train_begin(self, trainer: Any): pass
-    def on_train_end(self, trainer: Any): pass
-    
-    def on_epoch_begin(self, trainer: Any, epoch: int): pass
-    def on_epoch_end(self, trainer: Any, epoch: int, logs: Dict[str, Any]): pass
-    
-    def on_batch_begin(self, trainer: Any, batch: int, logs: Dict[str, Any]): pass
-    def on_batch_end(self, trainer: Any, batch: int, logs: Dict[str, Any]): pass
-    
-    def on_validation_begin(self, trainer: Any): pass
-    def on_validation_end(self, trainer: Any, logs: Dict[str, Any]): pass
+    def on_train_begin(self, trainer: Any):
+        pass
+
+    def on_train_end(self, trainer: Any):
+        pass
+
+    def on_epoch_begin(self, trainer: Any, epoch: int):
+        pass
+
+    def on_epoch_end(self, trainer: Any, epoch: int, logs: Dict[str, Any]):
+        pass
+
+    def on_batch_begin(self, trainer: Any, batch: int, logs: Dict[str, Any]):
+        pass
+
+    def on_batch_end(self, trainer: Any, batch: int, logs: Dict[str, Any]):
+        pass
+
+    def on_validation_begin(self, trainer: Any):
+        pass
+
+    def on_validation_end(self, trainer: Any, logs: Dict[str, Any]):
+        pass
 
     # --- State Serialization for Seamless Resume ---
     def state_dict(self) -> Dict[str, Any]:
@@ -50,32 +58,41 @@ class Callback:
 
 class CallbackRunner:
     """Executes callbacks in ordered sequence and manages collective callback states."""
+
     def __init__(self, callbacks: list[Callback]):
         self.callbacks = callbacks or []
 
     def on_train_begin(self, trainer):
-        for cb in self.callbacks: cb.on_train_begin(trainer)
+        for cb in self.callbacks:
+            cb.on_train_begin(trainer)
 
     def on_train_end(self, trainer):
-        for cb in self.callbacks: cb.on_train_end(trainer)
+        for cb in self.callbacks:
+            cb.on_train_end(trainer)
 
     def on_epoch_begin(self, trainer, epoch: int):
-        for cb in self.callbacks: cb.on_epoch_begin(trainer, epoch)
+        for cb in self.callbacks:
+            cb.on_epoch_begin(trainer, epoch)
 
     def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
-        for cb in self.callbacks: cb.on_epoch_end(trainer, epoch, logs)
+        for cb in self.callbacks:
+            cb.on_epoch_end(trainer, epoch, logs)
 
     def on_batch_begin(self, trainer, batch: int, logs: Dict[str, Any]):
-        for cb in self.callbacks: cb.on_batch_begin(trainer, batch, logs)
+        for cb in self.callbacks:
+            cb.on_batch_begin(trainer, batch, logs)
 
     def on_batch_end(self, trainer, batch: int, logs: Dict[str, Any]):
-        for cb in self.callbacks: cb.on_batch_end(trainer, batch, logs)
+        for cb in self.callbacks:
+            cb.on_batch_end(trainer, batch, logs)
 
     def on_validation_begin(self, trainer):
-        for cb in self.callbacks: cb.on_validation_begin(trainer)
+        for cb in self.callbacks:
+            cb.on_validation_begin(trainer)
 
     def on_validation_end(self, trainer, logs: Dict[str, Any]):
-        for cb in self.callbacks: cb.on_validation_end(trainer, logs)
+        for cb in self.callbacks:
+            cb.on_validation_end(trainer, logs)
 
     def state_dict(self) -> Dict[str, Any]:
         return {cb.__class__.__name__: cb.state_dict() for cb in self.callbacks}
@@ -105,15 +122,21 @@ class EarlyStoppingCallback(Callback):
         if score is None:
             return
 
-        improved = (score > self.best_score) if self.mode == "max" else (score < self.best_score)
-        
+        improved = (
+            (score > self.best_score)
+            if self.mode == "max"
+            else (score < self.best_score)
+        )
+
         if improved:
             self.best_score = score
             self.patience_counter = 0
         else:
             self.patience_counter += 1
             if self.patience_counter >= self.patience:
-                print(f"\n ⏹ Early stopping triggered! No improvement in '{self.monitor}' for {self.patience} epochs.")
+                print(
+                    f"\n ⏹ Early stopping triggered! No improvement in '{self.monitor}' for {self.patience} epochs."
+                )
                 trainer.request_stop()
 
     def state_dict(self) -> Dict[str, Any]:
@@ -124,49 +147,76 @@ class EarlyStoppingCallback(Callback):
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
         self.best_score = state_dict.get("best_score", self.best_score)
-        self.patience_counter = state_dict.get("patience_counter", self.patience_counter)
+        self.patience_counter = state_dict.get(
+            "patience_counter", self.patience_counter
+        )
 
 
 # =====================================================================
 # 2. Checkpoint Callback
 # =====================================================================
 class CheckpointCallback(Callback):
-    def __init__(self, run_dir: Path, monitor: str = "val_acc", mode: str = "max"):
+    """
+    Generic checkpoint callback for any training mode.
+
+    - Always saves the latest checkpoint (`checkpoint_last.pth`) and model weights (`last_model.pth`).
+    - Saves the best checkpoint (`checkpoint_best.pth`) and weights (`best_model.pth`)
+      based on a configurable monitored metric (e.g., `val_loss` for SSL, `val_acc` for supervised).
+    - Stores all epoch logs in the checkpoint for reproducibility.
+    """
+
+    def __init__(
+        self,
+        run_dir: Path,
+        monitor: str = "val_acc",
+        mode: str = "max",
+    ):
         self.run_dir = Path(run_dir)
         self.monitor = monitor
         self.mode = mode
         self.best_score = float("-inf") if mode == "max" else float("inf")
 
     def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
-        current_score = logs.get(self.monitor, 0.0)
-        
+        current_score = logs.get(self.monitor)
+        if current_score is None:
+            # Monitored metric missing – skip best model logic, but still save last.
+            current_score = float("-inf") if self.mode == "max" else float("inf")
+
+        # ---------------------------------------------------------
+        # Build checkpoint with full logs
+        # ---------------------------------------------------------
         checkpoint = {
             "epoch": epoch + 1,
-            "val_acc": logs.get("val_acc", 0.0),
-            "val_loss": logs.get("val_loss", float("inf")),
+            "logs": logs,  # store all metrics
             "model_state_dict": trainer.model.state_dict(),
             "optimizer_state_dict": trainer.optimizer.state_dict(),
-            "scheduler_state_dict": trainer.scheduler.state_dict() if trainer.scheduler else None,
+            "scheduler_state_dict": (
+                trainer.scheduler.state_dict() if trainer.scheduler else None
+            ),
             "precision_state_dict": trainer.precision.state_dict(),
-            "callbacks_state_dict": trainer.cb_runner.state_dict(),  # Callback state preserved
+            "callbacks_state_dict": trainer.cb_runner.state_dict(),
             "torch_rng_state": torch.get_rng_state(),
-            "cuda_rng_state": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            "cuda_rng_state": (
+                torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+            ),
             "git_commit": getattr(trainer, "git_hash", None),
             "torch_version": torch.__version__,
             "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
         }
 
-        # 1. Always save latest state for seamless resuming
+        # Always save latest
         torch.save(checkpoint, self.run_dir / "checkpoint_last.pth")
         torch.save(trainer.model.state_dict(), self.run_dir / "last_model.pth")
 
-        # 2. Save best checkpoint based on monitored metric
-        improved = (current_score > self.best_score) if self.mode == "max" else (current_score < self.best_score)
+        # Determine if current score is best
+        improved = (
+            (current_score > self.best_score)
+            if self.mode == "max"
+            else (current_score < self.best_score)
+        )
+
         if improved:
             self.best_score = current_score
-            trainer.best_val_acc = logs.get("val_acc", 0.0)
-            trainer.best_epoch = epoch + 1
-            
             torch.save(checkpoint, self.run_dir / "checkpoint_best.pth")
             torch.save(trainer.model.state_dict(), self.run_dir / "best_model.pth")
             print(f"    ✓ Saved new best model ({self.monitor}: {current_score:.4f})")
@@ -218,10 +268,13 @@ class WandBLoggerCallback(Callback):
     def __init__(self, config: Dict[str, Any], run_dir: Path):
         self.config = config
         self.run_dir = Path(run_dir)
-        self.enabled = config.get("logging", {}).get("use_wandb", False) and wandb is not None
+        self.enabled = (
+            config.get("logging", {}).get("use_wandb", False) and wandb is not None
+        )
 
     def on_train_begin(self, trainer):
-        if not self.enabled: return
+        if not self.enabled:
+            return
         log_cfg = self.config.get("logging", {})
         wandb.init(
             project=log_cfg.get("wandb_project", "bird-song-classifier"),
@@ -235,15 +288,28 @@ class WandBLoggerCallback(Callback):
         wandb.watch(trainer.model, log="gradients", log_freq=100)
 
     def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
-        if not self.enabled: return
+        if not self.enabled:
+            return
         wandb.log(logs, step=epoch)
 
     def on_train_end(self, trainer):
-        if not self.enabled: return
-        wandb.summary["best_val_acc"] = trainer.best_val_acc
-        wandb.summary["best_epoch"] = trainer.best_epoch
-        
-        for file in ["confusion_matrix.png", "per_class_metrics.png", "evaluation_metrics.json"]:
+        if not self.enabled:
+            return
+
+        # Save best monitored metric if available
+        if hasattr(trainer, "best_val_acc"):
+            wandb.summary["best_val_acc"] = trainer.best_val_acc
+        elif hasattr(trainer, "best_loss"):
+            wandb.summary["best_val_loss"] = trainer.best_loss
+
+        if hasattr(trainer, "best_epoch"):
+            wandb.summary["best_epoch"] = trainer.best_epoch
+
+        for file in [
+            "confusion_matrix.png",
+            "per_class_metrics.png",
+            "evaluation_metrics.json",
+        ]:
             path = self.run_dir / file
             if path.exists():
                 wandb.save(str(path), base_path=str(self.run_dir))
