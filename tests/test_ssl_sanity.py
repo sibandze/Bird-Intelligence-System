@@ -57,8 +57,9 @@ def test_simclr_overfit_small_batch():
     print(f"Final accuracy: {acc.item():.4f}")
 
     # Loss should decrease
-    assert final_loss < initial_loss, \
-        f"Loss did not decrease: {initial_loss:.4f} -> {final_loss:.4f}"
+    assert (
+        final_loss < initial_loss
+    ), f"Loss did not decrease: {initial_loss:.4f} -> {final_loss:.4f}"
 
     # Final loss should be reasonably low
     assert final_loss < 1.0, f"Loss too high: {final_loss:.4f}"
@@ -98,8 +99,9 @@ def test_simclr_accuracy_improves():
     print(f"Initial accuracy: {initial_acc:.4f}, Final accuracy: {final_acc:.4f}")
 
     # Accuracy should improve
-    assert final_acc > initial_acc, \
-        f"Accuracy did not improve: {initial_acc:.4f} -> {final_acc:.4f}"
+    assert (
+        final_acc > initial_acc
+    ), f"Accuracy did not improve: {initial_acc:.4f} -> {final_acc:.4f}"
 
 
 def test_embedding_extraction():
