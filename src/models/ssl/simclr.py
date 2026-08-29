@@ -18,8 +18,8 @@ class SimCLR(nn.Module):
     Architecture:
         x → Encoder f → h → Projection g → z → L2 normalize → NT-Xent loss
 
-    The loss maximizes agreement between differently augmented views 
-    of the same sample while minimizing agreement with all other samples 
+    The loss maximizes agreement between differently augmented views
+    of the same sample while minimizing agreement with all other samples
     in the batch.
     """
 
@@ -45,7 +45,11 @@ class SimCLR(nn.Module):
             encoder = CNNEncoder(**encoder_kwargs)
 
         if projection is None:
-            encoder_dim = encoder.get_output_dim() if hasattr(encoder, 'get_output_dim') else encoder_kwargs.get('embed_dim', 512)
+            encoder_dim = (
+                encoder.get_output_dim()
+                if hasattr(encoder, "get_output_dim")
+                else encoder_kwargs.get("embed_dim", 512)
+            )
             projection = ProjectionHead(
                 input_dim=encoder_dim,
                 hidden_dim=256,
@@ -114,15 +118,17 @@ class SimCLR(nn.Module):
         # Mask to remove self-similarity (diagonal)
         # Set diagonal to -inf so it doesn't contribute to softmax denominator
         self_mask = torch.eye(2 * B, dtype=torch.bool, device=device)
-        sim_matrix.masked_fill_(self_mask, float('-inf'))
+        sim_matrix.masked_fill_(self_mask, float("-inf"))
 
         # Create labels for positive pairs
         # For view1[i], positive is view2[i] (index i+B in concatenated tensor)
         # For view2[i], positive is view1[i] (index i in concatenated tensor)
-        positive_indices = torch.cat([
-            torch.arange(B, 2 * B, device=device),  # view1 positives: i+B
-            torch.arange(0, B, device=device),        # view2 positives: i
-        ])
+        positive_indices = torch.cat(
+            [
+                torch.arange(B, 2 * B, device=device),  # view1 positives: i+B
+                torch.arange(0, B, device=device),  # view2 positives: i
+            ]
+        )
 
         # Cross-entropy with softmax over all 2B-1 negatives
         loss = F.cross_entropy(sim_matrix, positive_indices)
@@ -133,7 +139,7 @@ class SimCLR(nn.Module):
         """
         InfoNCE loss implementation (symmetric version).
 
-        Explicitly computes the loss for both views separately 
+        Explicitly computes the loss for both views separately
         for comparison and debugging purposes.
 
         Returns same result as nt_xent_loss but is more explicit.
@@ -153,8 +159,10 @@ class SimCLR(nn.Module):
 
         # Mask self-similarity: z1[i] vs z1[i]
         mask_1 = torch.zeros(B, 2 * B, dtype=torch.bool, device=device)
-        mask_1[:, :B] = torch.eye(B, dtype=torch.bool, device=device)  # Mask diagonal in left block
-        sim_1.masked_fill_(mask_1, float('-inf'))
+        mask_1[:, :B] = torch.eye(
+            B, dtype=torch.bool, device=device
+        )  # Mask diagonal in left block
+        sim_1.masked_fill_(mask_1, float("-inf"))
 
         loss_1 = -pos_sim + torch.logsumexp(sim_1, dim=1)  # [B]
 
@@ -163,8 +171,10 @@ class SimCLR(nn.Module):
 
         # Mask self-similarity: z2[i] vs z2[i] (in right block, shifted by B)
         mask_2 = torch.zeros(B, 2 * B, dtype=torch.bool, device=device)
-        mask_2[:, B:] = torch.eye(B, dtype=torch.bool, device=device)  # Mask diagonal in right block
-        sim_2.masked_fill_(mask_2, float('-inf'))
+        mask_2[:, B:] = torch.eye(
+            B, dtype=torch.bool, device=device
+        )  # Mask diagonal in right block
+        sim_2.masked_fill_(mask_2, float("-inf"))
 
         loss_2 = -pos_sim + torch.logsumexp(sim_2, dim=1)  # [B]
 
@@ -203,7 +213,7 @@ class SimCLR(nn.Module):
         """
         Compute positive pair retrieval accuracy.
 
-        For each view, checks if the most similar embedding 
+        For each view, checks if the most similar embedding
         is the corresponding positive pair.
 
         Returns fraction of correctly identified positive pairs.
@@ -219,7 +229,7 @@ class SimCLR(nn.Module):
         # Mask out self (z1[i] vs z1[i])
         mask = torch.zeros(B, 2 * B, dtype=torch.bool, device=z1.device)
         mask[:, :B] = torch.eye(B, dtype=torch.bool, device=z1.device)
-        sim.masked_fill_(mask, float('-inf'))
+        sim.masked_fill_(mask, float("-inf"))
 
         # For view1[i], positive is at index i+B
         _, predicted = sim.max(dim=1)  # [B]
@@ -259,10 +269,12 @@ def nt_xent_loss_standalone(z1, z2, temperature=0.07):
     # Extract positive similarities
     # z1[i] vs z2[i] → diagonal offset by B
     # z2[i] vs z1[i] → diagonal offset by -B
-    pos_sim = torch.cat([
-        torch.diag(sim, B),    # z1[i] vs z2[i]
-        torch.diag(sim, -B),   # z2[i] vs z1[i]
-    ])  # [2B]
+    pos_sim = torch.cat(
+        [
+            torch.diag(sim, B),  # z1[i] vs z2[i]
+            torch.diag(sim, -B),  # z2[i] vs z1[i]
+        ]
+    )  # [2B]
 
     # Remove self-similarities for softmax denominator
     sim = sim - torch.eye(2 * B, device=device) * 1e9
