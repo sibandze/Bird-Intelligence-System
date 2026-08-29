@@ -24,31 +24,37 @@ from src.models.ssl import SimCLR
 from src.models.ssl.simclr import nt_xent_loss_standalone
 from src.data.datasets import SSLBirdSongDataset, SimCLRDataset, simclr_collate_fn
 
+
 # ============================================================================
 # Fixtures
 # ============================================================================
 @pytest.fixture
 def mock_metadata_df():
-    return pd.DataFrame({
-        'scientific_name': ['Species_A', 'Species_B', 'Species_A'],
-        'scientific_name_id': [0, 1, 0],
-        'local_spectrogram_path': [
-            '/fake/path/spec1.npy',
-            '/fake/path/spec2.npy',
-            '/fake/path/spec3.npy',
-        ],
-        'total_frames': [500, 300, 450],
-    })
+    return pd.DataFrame(
+        {
+            "scientific_name": ["Species_A", "Species_B", "Species_A"],
+            "scientific_name_id": [0, 1, 0],
+            "local_spectrogram_path": [
+                "/fake/path/spec1.npy",
+                "/fake/path/spec2.npy",
+                "/fake/path/spec3.npy",
+            ],
+            "total_frames": [500, 300, 450],
+        }
+    )
+
 
 @pytest.fixture
 def base_ssl_config():
     return {
-        'segment_size': 256,
-        'min_db': -80.0,
-        'max_db': 0.0,
-        'train': True,
-        'window_config': {'strategy': 'sliding', 'stride': 256},
+        "segment_size": 256,
+        "min_db": -80.0,
+        "max_db": 0.0,
+        "train": True,
+        "window_config": {"strategy": "sliding", "stride": 256},
     }
+
+
 @pytest.fixture
 def sample_batch():
     """Create a sample batch of spectrograms."""
@@ -84,6 +90,7 @@ def simclr_model():
 # CNN Encoder Tests
 # ============================================================================
 
+
 class TestCNNEncoder:
     """Test CNN encoder architecture."""
 
@@ -109,8 +116,8 @@ class TestCNNEncoder:
         B, C, H, W = features.shape
         assert B == 4
         assert C == 512  # base_channels * 8
-        assert H == 8    # n_mels / 16 = 128/16
-        assert W == 16   # time / 16 = 256/16
+        assert H == 8  # n_mels / 16 = 128/16
+        assert W == 16  # time / 16 = 256/16
 
     def test_forward_sequence_output_shape(self, cnn_encoder, sample_batch):
         """forward_sequence() should output [B, S, D] token sequence."""
@@ -119,7 +126,7 @@ class TestCNNEncoder:
 
         B, S, D = sequence.shape
         assert B == 4
-        assert S == 16   # time / 16 = 256/16
+        assert S == 16  # time / 16 = 256/16
         assert D == 512  # base_channels * 8
 
     def test_forward_sequence_for_transformer_input(self, cnn_encoder):
@@ -191,11 +198,11 @@ class TestCNNEncoder:
     def test_features_preserve_spatial_info(self, cnn_encoder):
         """Feature map should preserve spatial structure."""
         # Create two spectrograms with different patterns in different regions
-        x1 = torch.zeros(1, 128, 512)          # [B, n_mels, time]
-        x1[:, :64, :256] = 1.0                 # top-left quadrant (freq <64, time<256)
+        x1 = torch.zeros(1, 128, 512)  # [B, n_mels, time]
+        x1[:, :64, :256] = 1.0  # top-left quadrant (freq <64, time<256)
 
         x2 = torch.zeros(1, 128, 512)
-        x2[:, 64:, 256:] = 1.0                 # bottom-right quadrant
+        x2[:, 64:, 256:] = 1.0  # bottom-right quadrant
 
         features1 = cnn_encoder.forward_features(x1)
         features2 = cnn_encoder.forward_features(x2)
@@ -206,15 +213,15 @@ class TestCNNEncoder:
     def test_sequence_temporal_order(self, cnn_encoder):
         """Sequence tokens should maintain temporal order."""
         # Create spectrogram with distinct patterns at different times
-        x = torch.zeros(1, 128, 320) # [B, n_mels, time]
-        x[:, :, :100] = 1.0   # Early
-        x[:, :, 220:] = 2.0   # Late
+        x = torch.zeros(1, 128, 320)  # [B, n_mels, time]
+        x[:, :, :100] = 1.0  # Early
+        x[:, :, 220:] = 2.0  # Late
 
         sequence = cnn_encoder.forward_sequence(x)  # [1, 20, 512]
 
         # Early tokens should differ from late tokens
-        early_tokens = sequence[:, :5, :]   # First 5 tokens
-        late_tokens = sequence[:, -5:, :]   # Last 5 tokens
+        early_tokens = sequence[:, :5, :]  # First 5 tokens
+        late_tokens = sequence[:, -5:, :]  # Last 5 tokens
 
         # Mean patterns should be different
         assert not torch.allclose(
@@ -259,7 +266,8 @@ class TestCNNEncoder:
         loss_h.backward()
         # Check gradients exist
         grad_count = sum(
-            1 for p in cnn_encoder.parameters()
+            1
+            for p in cnn_encoder.parameters()
             if p.grad is not None and p.grad.abs().sum() > 0
         )
         assert grad_count > 0, "No gradients in forward()"
@@ -270,7 +278,8 @@ class TestCNNEncoder:
         loss_f = features.sum()
         loss_f.backward()
         grad_count = sum(
-            1 for p in cnn_encoder.parameters()
+            1
+            for p in cnn_encoder.parameters()
             if p.grad is not None and p.grad.abs().sum() > 0
         )
         assert grad_count > 0, "No gradients in forward_features()"
@@ -281,7 +290,8 @@ class TestCNNEncoder:
         loss_s = sequence.sum()
         loss_s.backward()
         grad_count = sum(
-            1 for p in cnn_encoder.parameters()
+            1
+            for p in cnn_encoder.parameters()
             if p.grad is not None and p.grad.abs().sum() > 0
         )
         assert grad_count > 0, "No gradients in forward_sequence()"
@@ -312,7 +322,7 @@ class TestCNNEncoder:
         """Weights should be initialized with non-zero values."""
         encoder = CNNEncoder(n_mels=128, embed_dim=512)
         for name, param in encoder.named_parameters():
-            if 'weight' in name:
+            if "weight" in name:
                 assert param.abs().sum() > 0, f"Zero weights for {name}"
 
     def test_conv_output_shapes_intermediate(self, cnn_encoder):
@@ -336,6 +346,7 @@ class TestCNNEncoder:
 # ============================================================================
 # Integration: CNN features → SimCLR
 # ============================================================================
+
 
 class TestCNNSimCLRIntegration:
     """Test integration between CNN encoder features and SimCLR."""
@@ -396,9 +407,11 @@ class TestCNNSimCLRIntegration:
         h_direct = simclr_model.encoder(sample_batch)
         assert torch.allclose(h, h_direct)
 
+
 # ============================================================================
 # Projection Head Tests
 # ============================================================================
+
 
 class TestProjectionHead:
     """Test projection head for contrastive learning."""
@@ -459,6 +472,7 @@ class TestProjectionHead:
 # NT-Xent / InfoNCE Loss Tests
 # ============================================================================
 
+
 class TestSimCLRLoss:
     """Test contrastive loss functions."""
 
@@ -494,8 +508,9 @@ class TestSimCLRLoss:
         loss_far = simclr_model.nt_xent_loss(z1_far, z2_far)
 
         # Similar pairs should have lower loss
-        assert loss_close.item() < loss_far.item(), \
-            f"close={loss_close.item():.4f}, far={loss_far.item():.4f}"
+        assert (
+            loss_close.item() < loss_far.item()
+        ), f"close={loss_close.item():.4f}, far={loss_far.item():.4f}"
 
     def test_loss_symmetry(self, simclr_model, normalized_projections):
         """Loss should be symmetric: L(z1, z2) = L(z2, z1)."""
@@ -519,8 +534,9 @@ class TestSimCLRLoss:
         assert loss_high.item() >= 0
         # With small batch (2 samples), temperature effect may not hold monotonically
         # Just verify they're different
-        assert loss_low.item() != loss_high.item(), \
-              f"Temperature should affect loss: both are {loss_low.item():.4f}"
+        assert (
+            loss_low.item() != loss_high.item()
+        ), f"Temperature should affect loss: both are {loss_low.item():.4f}"
 
     def test_perfect_pairs_zero_loss(self, simclr_model):
         """Identical pairs should have very low loss."""
@@ -542,8 +558,9 @@ class TestSimCLRLoss:
         loss_nt_xent = simclr_model.nt_xent_loss(z1.clone(), z2.clone())
         loss_info_nce = simclr_model.info_nce_loss(z1.clone(), z2.clone())
 
-        assert torch.allclose(loss_nt_xent, loss_info_nce, atol=1e-5), \
-            f"nt_xent={loss_nt_xent.item():.6f}, info_nce={loss_info_nce.item():.6f}"
+        assert torch.allclose(
+            loss_nt_xent, loss_info_nce, atol=1e-5
+        ), f"nt_xent={loss_nt_xent.item():.6f}, info_nce={loss_info_nce.item():.6f}"
 
     def test_standalone_loss_function(self, normalized_projections):
         """Standalone loss function should match class method."""
@@ -551,7 +568,9 @@ class TestSimCLRLoss:
 
         model = SimCLR(n_mels=128, embed_dim=512, temperature=0.07)
         loss_class = model.nt_xent_loss(z1.clone(), z2.clone())
-        loss_standalone = nt_xent_loss_standalone(z1.clone(), z2.clone(), temperature=0.07)
+        loss_standalone = nt_xent_loss_standalone(
+            z1.clone(), z2.clone(), temperature=0.07
+        )
 
         assert torch.allclose(loss_class, loss_standalone, atol=1e-5)
 
@@ -581,6 +600,7 @@ class TestSimCLRLoss:
 # ============================================================================
 # SimCLR Model Tests
 # ============================================================================
+
 
 class TestSimCLRModel:
     """Test SimCLR model integration."""
@@ -671,12 +691,17 @@ class TestSimCLRModel:
 # Integration Tests (Data → Model)
 # ============================================================================
 
+
 class TestDataModelIntegration:
     """Integration tests connecting data pipeline to model."""
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_dataset_to_model_flow(
-        self, mock_load, mock_metadata_df, base_ssl_config, simclr_model,
+        self,
+        mock_load,
+        mock_metadata_df,
+        base_ssl_config,
+        simclr_model,
     ):
         """Full flow from dataset to model output."""
         from torch.utils.data import DataLoader
@@ -698,9 +723,13 @@ class TestDataModelIntegration:
             assert loss.item() >= 0
             break
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_encode_for_downstream(
-        self, mock_load, mock_metadata_df, base_ssl_config, simclr_model,
+        self,
+        mock_load,
+        mock_metadata_df,
+        base_ssl_config,
+        simclr_model,
     ):
         """Encoder embeddings should be extractable for downstream tasks."""
         simclr_model.eval()
