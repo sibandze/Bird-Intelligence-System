@@ -6,8 +6,8 @@ from .spectrogram import SpecAugmentation
 from .pipeline import AugmentationPipeline
 
 __all__ = [
-    'BaseAugmentation',
-    'AcousticAugmentation',
-    'SpecAugmentation',
-    'AugmentationPipeline',
+    "BaseAugmentation",
+    "AcousticAugmentation",
+    "SpecAugmentation",
+    "AugmentationPipeline",
 ]
