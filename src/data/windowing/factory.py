@@ -26,9 +26,7 @@ def build_window_strategy(
 
     if strategy_type == "sliding":
 
-        return SlidingWindowStrategy(
-            stride=config.get("stride", 256)
-        )
+        return SlidingWindowStrategy(stride=config.get("stride", 256))
 
     if strategy_type == "random":
 
@@ -38,6 +36,4 @@ def build_window_strategy(
 
         return CenterWindowStrategy()
 
-    raise ValueError(
-        f"Unknown windowing strategy: '{strategy_type}'"
-    )
+    raise ValueError(f"Unknown windowing strategy: '{strategy_type}'")
