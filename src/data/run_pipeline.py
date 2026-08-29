@@ -26,7 +26,7 @@ def get_spectrogram_frames(npy_path: str) -> int:
     """
     try:
         # Memory-map the file to read shape without loading full array
-        mel = np.load(npy_path, mmap_mode='r')
+        mel = np.load(npy_path, mmap_mode="r")
         return mel.shape[1]  # T dimension: [n_mels, T]
     except Exception:
         return 0
@@ -54,34 +54,40 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
     df = pd.read_csv(data_cfg["data_csv"])
 
     df = df[["common_name", "scientific_name", "Download_link", "xc_id"]].copy()
-    df = df.dropna(
-        subset=["Download_link", "xc_id", "scientific_name"]
-    ).reset_index(drop=True)
-    
+    df = df.dropna(subset=["Download_link", "xc_id", "scientific_name"]).reset_index(
+        drop=True
+    )
+
     # Check config or argument override for full dataset mode
     if use_full_dataset or data_cfg.get("use_full_dataset", False):
         print("🌐 Mode: Full Dataset (No balancing/class filtering)")
         df_target = df.copy()
     else:
-        print(f"⚖️ Mode: Balanced Dataset (Top {num_classes} classes, {num_samples_per_class} samples/class)")
+        print(
+            f"⚖️ Mode: Balanced Dataset (Top {num_classes} classes, {num_samples_per_class} samples/class)"
+        )
         top_classes = (
             df["scientific_name"].value_counts().head(num_classes).index.tolist()
         )
-        
+
         # Print a table of the top species and their total recording counts
         print(f"\nTop {num_classes} Species by Recording Count (source metadata):")
         print("-" * 80)
-        print(f"{'Rank':<5} {'Common Name':<30} {'Scientific Name':<30} {'Recordings':>10}")
+        print(
+            f"{'Rank':<5} {'Common Name':<30} {'Scientific Name':<30} {'Recordings':>10}"
+        )
         print("-" * 80)
 
         top_counts = df["scientific_name"].value_counts().head(num_classes)
         for rank, (sci_name, count) in enumerate(top_counts.items(), start=1):
             # Get the first common name associated with this scientific name
-            common_name = df.loc[df["scientific_name"] == sci_name, "common_name"].iloc[0]
+            common_name = df.loc[df["scientific_name"] == sci_name, "common_name"].iloc[
+                0
+            ]
             print(f"{rank:<5} {common_name:<30} {sci_name:<30} {count:>10,}")
 
         print("-" * 80)
-        
+
         df_target = pd.DataFrame()
         for sci_name in top_classes:
             class_samples = df[df["scientific_name"] == sci_name].head(
@@ -148,9 +154,11 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
                 pbar.set_postfix(
                     proc=processed_count, skip=skipped_count, fail=failed_count
                 )
-                continue 
+                continue
             else:
-                tqdm.write(f"⚠️ Corrupted cached spectrogram for {rc_id}, reprocessing...")
+                tqdm.write(
+                    f"⚠️ Corrupted cached spectrogram for {rc_id}, reprocessing..."
+                )
                 # Fall through to reprocess
                 pass
 
@@ -206,14 +214,16 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
             tqdm.write(f"⚠️ Could not create spectrogram for {rc_id}")
             failed_count += 1
 
-        pbar.set_postfix(
-            proc=processed_count, skip=skipped_count, fail=failed_count
-        )
+        pbar.set_postfix(proc=processed_count, skip=skipped_count, fail=failed_count)
 
     # Add summary statistics to final DataFrame
     if processed_rows:
         # Output aligned metadata CSV
-        tag = "full" if (use_full_dataset or data_cfg.get("use_full_dataset", False)) else "balanced"
+        tag = (
+            "full"
+            if (use_full_dataset or data_cfg.get("use_full_dataset", False))
+            else "balanced"
+        )
         output_metadata_csv = Path(data_cfg["metadata_dir"]) / (
             f"metadata_{tag}_sr{audio_cfg['sr']}_nfft{audio_cfg['n_fft']}"
             f"_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}.csv"
@@ -224,10 +234,13 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
 
         # Add derived column: number of valid windows per recording
         # This is useful for the sliding window strategy
-        window_stride = config.get("window", {}).get("stride",
-                                                     audio_cfg.get("window_stride", 256))
+        window_stride = config.get("window", {}).get(
+            "stride", audio_cfg.get("window_stride", 256)
+        )
 
-        def calculate_num_windows(total_frames: int, segment_size: int, stride: int) -> int:
+        def calculate_num_windows(
+            total_frames: int, segment_size: int, stride: int
+        ) -> int:
             """Match SlidingWindowStrategy._build_starts including forced tail."""
             if total_frames <= segment_size:
                 return 1
@@ -244,7 +257,7 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
         )
 
         final_df.to_csv(output_metadata_csv, index=False)
-        
+
         elapsed_time = time.time() - start_time
         mins, secs = divmod(int(elapsed_time), 60)
         hrs, mins = divmod(mins, 60)
