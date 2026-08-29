@@ -2,4 +2,4 @@
 
 from .simclr import SimCLR
 
-__all__ = ['SimCLR']
+__all__ = ["SimCLR"]
