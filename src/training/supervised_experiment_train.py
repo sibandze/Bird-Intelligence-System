@@ -21,9 +21,15 @@ from src.training.precision import PrecisionManager
 from src.training.scheduler import create_scheduler, get_scheduler_step_frequency
 from src.utils.memory_utils import get_gpu_memory_info, log_memory_usage
 from src.training.callbacks import (
-    Callback, CallbackRunner, CheckpointCallback, EarlyStoppingCallback,
-    JSONLoggerCallback, CSVLoggerCallback, WandBLoggerCallback
+    Callback,
+    CallbackRunner,
+    CheckpointCallback,
+    EarlyStoppingCallback,
+    JSONLoggerCallback,
+    CSVLoggerCallback,
+    WandBLoggerCallback,
 )
+
 
 def supervised_val_collate_fn(batch):
     """
@@ -65,7 +71,7 @@ def aggregate_recordings(logits_all, labels_all, recording_ids_all):
     for rec_id in unique_ids:
         mask = np.array([r == rec_id for r in rec_ids_str])
         avg_logits = logits_all[mask].mean(dim=0)  # [num_classes]
-        true_label = labels_all[mask][0]           # all same for a recording
+        true_label = labels_all[mask][0]  # all same for a recording
 
         rec_ids.append(rec_id)
         rec_targets.append(true_label.item())
@@ -75,19 +81,31 @@ def aggregate_recordings(logits_all, labels_all, recording_ids_all):
     rec_logits = torch.stack(rec_logits, dim=0)
     return rec_ids, rec_targets, rec_logits
 
+
 class SupervisedExperimentTrainer:
     """Supervised learning training engine with callback-driven architecture."""
 
-    def __init__(self, config: Dict[str, Any], run_dir: Path, callbacks: Optional[List[Callback]] = None):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        run_dir: Path,
+        callbacks: Optional[List[Callback]] = None,
+    ):
         self.config = config
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(exist_ok=True, parents=True)
 
-        self.device = torch.device(config['training'].get('device', 'cuda') if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device(
+            config["training"].get("device", "cuda")
+            if torch.cuda.is_available()
+            else "cpu"
+        )
         self.precision = PrecisionManager(
             enabled=config["training"].get("mixed_precision", {}).get("enabled", True),
             device=self.device.type,
-            use_bfloat16=config["training"].get("mixed_precision", {}).get("use_bfloat16", False),
+            use_bfloat16=config["training"]
+            .get("mixed_precision", {})
+            .get("use_bfloat16", False),
         )
 
         self.best_val_acc = 0.0
@@ -98,16 +116,22 @@ class SupervisedExperimentTrainer:
         if callbacks is None:
             callbacks = [
                 CheckpointCallback(self.run_dir, monitor="val_acc", mode="max"),
-                EarlyStoppingCallback(monitor="val_acc", mode="max", patience=config["training"].get("patience", 15)),
+                EarlyStoppingCallback(
+                    monitor="val_acc",
+                    mode="max",
+                    patience=config["training"].get("patience", 15),
+                ),
                 JSONLoggerCallback(self.run_dir),
                 CSVLoggerCallback(self.run_dir),
-                WandBLoggerCallback(config, self.run_dir)
+                WandBLoggerCallback(config, self.run_dir),
             ]
         self.cb_runner = CallbackRunner(callbacks)
 
         # Store environment state
         try:
-            self.git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+            self.git_hash = (
+                subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+            )
         except Exception:
             self.git_hash = None
 
@@ -116,45 +140,47 @@ class SupervisedExperimentTrainer:
         self.stop_training = True
 
     def get_dataloaders(self, df: pd.DataFrame):
-        batch_size = self.config['training']['batch_size']
-        num_workers = self.config['training']['num_workers']
+        batch_size = self.config["training"]["batch_size"]
+        num_workers = self.config["training"]["num_workers"]
         segment_size = self.config["audio"]["segment_size"]
-        window_config = self.config['window']
-        
+        window_config = self.config["window"]
+
         # Recording-level train/val/test split (70/15/15 by default)
-        test_size = self.config['training'].get('test_size', 0.15)
-        val_size = self.config['training'].get('val_size', 0.15)
-        
+        test_size = self.config["training"].get("test_size", 0.15)
+        val_size = self.config["training"].get("val_size", 0.15)
+
         # Dynamically compute minimum recordings needed per class for evaluation splits
         min_eval_split = min(val_size, test_size)
         if min_eval_split <= 0:
             raise ValueError("val_size and test_size must be > 0")
-            
+
         # Required so that each split gets at least one sample per class
-        MIN_RECORDINGS_FOR_EVAL = int(np.ceil(1.0 / min_eval_split)) + 1  # +1 safety margin
-   
+        MIN_RECORDINGS_FOR_EVAL = (
+            int(np.ceil(1.0 / min_eval_split)) + 1
+        )  # +1 safety margin
+
         counts = df["scientific_name_id"].value_counts()
-        
+
         eval_classes = counts[counts >= MIN_RECORDINGS_FOR_EVAL].index
         rare_classes = counts[counts < MIN_RECORDINGS_FOR_EVAL].index
-        
+
         eval_df = df[df["scientific_name_id"].isin(eval_classes)].copy()
         rare_df = df[df["scientific_name_id"].isin(rare_classes)].copy()
-        
+
         train_df, temp_df = train_test_split(
             eval_df,
             test_size=val_size + test_size,
             random_state=42,
             stratify=eval_df["scientific_name_id"],
         )
-        
+
         val_df, test_df = train_test_split(
             temp_df,
             test_size=test_size / (val_size + test_size),
             random_state=42,
             stratify=temp_df["scientific_name_id"],
         )
-        
+
         # Keep all rare recordings for training
         train_df = pd.concat(
             [train_df, rare_df],
@@ -166,8 +192,8 @@ class SupervisedExperimentTrainer:
             segment_size=segment_size,
             train=True,
             spec_aug_config=self._get_augmentation_config(),
-            min_db=self.config['audio']['min_db'],
-            max_db=self.config['audio']['max_db'],
+            min_db=self.config["audio"]["min_db"],
+            max_db=self.config["audio"]["max_db"],
             window_config=window_config,
         )
 
@@ -176,11 +202,11 @@ class SupervisedExperimentTrainer:
             segment_size=segment_size,
             train=False,
             label_to_idx=train_dataset.label_to_idx,
-            min_db=self.config['audio']['min_db'],
-            max_db=self.config['audio']['max_db'],
+            min_db=self.config["audio"]["min_db"],
+            max_db=self.config["audio"]["max_db"],
             window_config={
                 "strategy": "sliding",
-                "stride": segment_size,   # non-overlapping windows for validation
+                "stride": segment_size,  # non-overlapping windows for validation
             },
             return_recording_id=True,
         )
@@ -190,8 +216,8 @@ class SupervisedExperimentTrainer:
             segment_size=segment_size,
             train=False,
             label_to_idx=train_dataset.label_to_idx,
-            min_db=self.config['audio']['min_db'],
-            max_db=self.config['audio']['max_db'],
+            min_db=self.config["audio"]["min_db"],
+            max_db=self.config["audio"]["max_db"],
             window_config={
                 "strategy": "sliding",
                 "stride": segment_size,
@@ -200,43 +226,60 @@ class SupervisedExperimentTrainer:
         )
 
         train_loader = DataLoader(
-            train_dataset, batch_size=batch_size, shuffle=True,
-            num_workers=num_workers, pin_memory=(self.device.type == "cuda"),
-            persistent_workers=num_workers > 0
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=(self.device.type == "cuda"),
+            persistent_workers=num_workers > 0,
         )
         val_loader = DataLoader(
-            val_dataset, batch_size=batch_size, shuffle=False,
-            num_workers=num_workers, pin_memory=(self.device.type == "cuda"),
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=(self.device.type == "cuda"),
             persistent_workers=num_workers > 0,
-            collate_fn=supervised_val_collate_fn
+            collate_fn=supervised_val_collate_fn,
         )
         test_loader = DataLoader(
-            test_dataset, batch_size=batch_size, shuffle=False,
-            num_workers=num_workers, pin_memory=(self.device.type == "cuda"),
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=(self.device.type == "cuda"),
             persistent_workers=num_workers > 0,
-            collate_fn=supervised_val_collate_fn
+            collate_fn=supervised_val_collate_fn,
         )
 
-        return train_loader, val_loader, test_loader, train_dataset.label_to_idx, train_dataset.idx_to_label
+        return (
+            train_loader,
+            val_loader,
+            test_loader,
+            train_dataset.label_to_idx,
+            train_dataset.idx_to_label,
+        )
 
     def _get_augmentation_config(self) -> Dict:
         """Extract spec augmentation configuration."""
-        aug_cfg = self.config['augmentation']
+        aug_cfg = self.config["augmentation"]
         return {
-            'enabled': aug_cfg.get('enabled', True),
-            'prob': aug_cfg.get('prob', 0.5),
-            'num_freq_masks': aug_cfg.get('num_freq_masks', 2),
-            'freq_mask_param': aug_cfg.get('freq_mask_param', 6),
-            'num_time_masks': aug_cfg.get('num_time_masks', 2),
-            'time_mask_param': aug_cfg.get('time_mask_param', 10),
+            "enabled": aug_cfg.get("enabled", True),
+            "prob": aug_cfg.get("prob", 0.5),
+            "num_freq_masks": aug_cfg.get("num_freq_masks", 2),
+            "freq_mask_param": aug_cfg.get("freq_mask_param", 6),
+            "num_time_masks": aug_cfg.get("num_time_masks", 2),
+            "time_mask_param": aug_cfg.get("time_mask_param", 10),
         }
 
     def train(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Run supervised training loop."""
-        train_loader, val_loader, test_loader, label_to_idx, idx_to_label = self.get_dataloaders(df)
+        train_loader, val_loader, test_loader, label_to_idx, idx_to_label = (
+            self.get_dataloaders(df)
+        )
         class_names = [idx_to_label[i] for i in range(len(idx_to_label))]
 
-        segment_size = self.config['audio']['segment_size']
+        segment_size = self.config["audio"]["segment_size"]
 
         # Initialize Model
         self.model = SupervisedTransformer(
@@ -247,7 +290,9 @@ class SupervisedExperimentTrainer:
 
         # Print Model and Environment Summary
         num_params = sum(p.numel() for p in self.model.parameters())
-        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        trainable_params = sum(
+            p.numel() for p in self.model.parameters() if p.requires_grad
+        )
         compiled = self.config["training"].get("compile_model", False)
 
         print(f"\n>>> Initializing Supervised Training Run:")
@@ -265,19 +310,21 @@ class SupervisedExperimentTrainer:
         criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.AdamW(
             self.model.parameters(),
-            lr=self.config['training']['learning_rate'],
-            weight_decay=self.config['training'].get('weight_decay', 0.01)
+            lr=self.config["training"]["learning_rate"],
+            weight_decay=self.config["training"].get("weight_decay", 0.01),
         )
 
-        epochs = self.config['training']['epochs']
-        scheduler_type = self.config['training'].get('scheduler_type', 'cosine')
-        warmup_steps = self.config['training'].get('warmup_steps', 0)
-        total_steps = max(len(train_loader) * epochs, warmup_steps*2)
+        epochs = self.config["training"]["epochs"]
+        scheduler_type = self.config["training"].get("scheduler_type", "cosine")
+        warmup_steps = self.config["training"].get("warmup_steps", 0)
+        total_steps = max(len(train_loader) * epochs, warmup_steps * 2)
 
         self.scheduler = create_scheduler(
-            optimizer=self.optimizer, scheduler_type=scheduler_type,
-            warmup_steps=warmup_steps, total_steps=total_steps,
-            min_lr=self.config['training'].get('min_lr', 1e-6)
+            optimizer=self.optimizer,
+            scheduler_type=scheduler_type,
+            warmup_steps=warmup_steps,
+            total_steps=total_steps,
+            min_lr=self.config["training"].get("min_lr", 1e-6),
         )
         step_frequency = get_scheduler_step_frequency(scheduler_type)
 
@@ -285,8 +332,12 @@ class SupervisedExperimentTrainer:
         resume_epoch = 0
         checkpoint_path = self.run_dir / "checkpoint_last.pth"
         if checkpoint_path.exists():
-            print(f"    ↻ Found existing checkpoint. Resuming from {checkpoint_path.name}")
-            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+            print(
+                f"    ↻ Found existing checkpoint. Resuming from {checkpoint_path.name}"
+            )
+            checkpoint = torch.load(
+                checkpoint_path, map_location=self.device, weights_only=False
+            )
 
             self.model.load_state_dict(checkpoint["model_state_dict"])
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -321,22 +372,25 @@ class SupervisedExperimentTrainer:
 
             # --- Training Phase ---
             self.model.train()
-            train_loss, train_correct, train_total, epoch_grad_norm, num_batches = 0.0, 0, 0, 0.0, 0
+            train_loss, train_correct, train_total, epoch_grad_norm, num_batches = (
+                0.0,
+                0,
+                0,
+                0.0,
+                0,
+            )
 
-            for batch_idx, (mel_segments, labels) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]", leave=False)):
-                #if batch_idx == 0:
-                #    print(
-                #        f"supervised_experiment_train.py train loop "
-                #        f"mel_segments: {tuple(mel_segments.shape)}"
-                #    )
-                #    print(
-                #        f"supervised_experiment_train.py train loop "
-                #        f"labels: {tuple(labels.shape)}"
-                #    )
+            for batch_idx, (mel_segments, labels) in enumerate(
+                tqdm(
+                    train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]", leave=False
+                )
+            ):
                 batch_start_logs = {"batch": batch_idx}
                 self.cb_runner.on_batch_begin(self, batch_idx, batch_start_logs)
 
-                mel_segments, labels = mel_segments.to(self.device), labels.to(self.device)
+                mel_segments, labels = mel_segments.to(self.device), labels.to(
+                    self.device
+                )
                 self.optimizer.zero_grad(set_to_none=True)
 
                 with self.precision.autocast():
@@ -348,7 +402,8 @@ class SupervisedExperimentTrainer:
 
                 grad_clip = self.config["training"].get("gradient_clip")
                 batch_norm = torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), max_norm=grad_clip if grad_clip is not None else float('inf')
+                    self.model.parameters(),
+                    max_norm=grad_clip if grad_clip is not None else float("inf"),
                 ).item()
                 epoch_grad_norm += batch_norm
                 num_batches += 1
@@ -356,7 +411,7 @@ class SupervisedExperimentTrainer:
                 self.precision.step(self.optimizer)
                 self.precision.update()
 
-                if self.scheduler and step_frequency == 'batch':
+                if self.scheduler and step_frequency == "batch":
                     self.scheduler.step()
 
                 batch_loss = loss.item()
@@ -385,14 +440,12 @@ class SupervisedExperimentTrainer:
 
                 with torch.no_grad():
                     for batch_idx, (mel_segments, labels, recording_ids) in enumerate(
-                        tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]", leave=False)
+                        tqdm(
+                            val_loader,
+                            desc=f"Epoch {epoch+1}/{epochs} [Val]",
+                            leave=False,
+                        )
                     ):
-                        # Debug prints commented out
-                        # if batch_idx == 0:
-                        #     print(f"validation mel_segments: {tuple(mel_segments.shape)}")
-                        #     print(f"validation labels: {tuple(labels.shape)}")
-                        #     print(f"validation recording_ids: {recording_ids[:5]}")
-
                         mel_segments = mel_segments.to(self.device)
                         labels = labels.to(self.device)
 
@@ -408,7 +461,7 @@ class SupervisedExperimentTrainer:
 
                         all_logits.append(logits.detach().cpu())
                         all_labels.append(labels.cpu())
-                        all_rec_ids.extend(recording_ids)   # recording_ids is a list
+                        all_rec_ids.extend(recording_ids)  # recording_ids is a list
 
                 # Concatenate
                 all_logits = torch.cat(all_logits, dim=0)
@@ -421,7 +474,9 @@ class SupervisedExperimentTrainer:
 
                 # Recording-level loss and accuracy
                 if len(rec_targets) > 0:
-                    rec_loss = criterion(rec_logits.to(self.device), rec_targets.to(self.device))
+                    rec_loss = criterion(
+                        rec_logits.to(self.device), rec_targets.to(self.device)
+                    )
                     avg_val_loss = rec_loss.item()
                     rec_preds = rec_logits.argmax(dim=1).cpu()
                     val_acc = (rec_preds == rec_targets).float().mean().item()
@@ -430,16 +485,18 @@ class SupervisedExperimentTrainer:
                     val_acc = 0.0
 
             # Window-level accuracy for diagnostics
-            val_window_acc = val_correct_window / val_total_windows if val_total_windows > 0 else 0.0
+            val_window_acc = (
+                val_correct_window / val_total_windows if val_total_windows > 0 else 0.0
+            )
 
             val_logs = {
-                "val_loss": avg_val_loss,           # recording-level loss
-                "val_acc": val_acc,                 # recording-level accuracy
-                "val_window_acc": val_window_acc,   # window-level accuracy (for reference)
+                "val_loss": avg_val_loss,  # recording-level loss
+                "val_acc": val_acc,  # recording-level accuracy
+                "val_window_acc": val_window_acc,  # window-level accuracy (for reference)
             }
             self.cb_runner.on_validation_end(self, val_logs)
 
-            if self.scheduler and step_frequency == 'epoch':
+            if self.scheduler and step_frequency == "epoch":
                 if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
                     self.scheduler.step(avg_val_loss)
                 else:
@@ -448,12 +505,12 @@ class SupervisedExperimentTrainer:
             # Construct Epoch Metrics Dictionary
             epoch_duration = time.time() - epoch_start_time
             logs = {
-                'epoch': epoch + 1,
-                'train_loss': train_loss / train_total,
-                'train_acc': train_correct / train_total,
-                'val_loss': avg_val_loss,
-                'val_acc': val_acc,
-                'learning_rate': self.optimizer.param_groups[0]["lr"],
+                "epoch": epoch + 1,
+                "train_loss": train_loss / train_total,
+                "train_acc": train_correct / train_total,
+                "val_loss": avg_val_loss,
+                "val_acc": val_acc,
+                "learning_rate": self.optimizer.param_groups[0]["lr"],
                 "precision": self.precision.precision_name(),
                 "loss_scale": self.precision.current_scale(),
                 "grad_norm": epoch_grad_norm / num_batches,
@@ -464,9 +521,11 @@ class SupervisedExperimentTrainer:
             # Memory usage logging
             logs.update(get_gpu_memory_info(self.device))
 
-            print(f"Epoch {epoch+1}/{epochs} | {epoch_duration:.1f}s | "
-                  f"Train Loss: {logs['train_loss']:.4f} | Train Acc: {logs['train_acc']:.4f} | "
-                  f"Val Loss: {logs['val_loss']:.4f} | Val Acc: {logs['val_acc']:.4f}")
+            print(
+                f"Epoch {epoch+1}/{epochs} | {epoch_duration:.1f}s | "
+                f"Train Loss: {logs['train_loss']:.4f} | Train Acc: {logs['train_acc']:.4f} | "
+                f"Val Loss: {logs['val_loss']:.4f} | Val Acc: {logs['val_acc']:.4f}"
+            )
 
             # Notify Epoch End Callbacks
             self.cb_runner.on_epoch_end(self, epoch, logs)
@@ -480,7 +539,9 @@ class SupervisedExperimentTrainer:
         self.cb_runner.on_train_end(self)
         return metrics
 
-    def _evaluate(self, model: nn.Module, test_loader: DataLoader, class_names: list) -> Dict:
+    def _evaluate(
+        self, model: nn.Module, test_loader: DataLoader, class_names: list
+    ) -> Dict:
         model.eval()
         collector = MetricsCollector(self.run_dir, class_names)
 
@@ -492,11 +553,6 @@ class SupervisedExperimentTrainer:
             for batch_idx, (mel_segments, labels, recording_ids) in enumerate(
                 tqdm(test_loader, desc="Evaluating", leave=False)
             ):
-                # Debug prints commented out
-                # if batch_idx == 0:
-                #     print(f"eval mel_segments: {tuple(mel_segments.shape)}")
-                #     print(f"eval labels: {tuple(labels.shape)}")
-                #     print(f"eval recording_ids: {recording_ids[:5]}")
                 mel_segments = mel_segments.to(self.device)
                 with self.precision.autocast():
                     logits = model(mel_segments)
