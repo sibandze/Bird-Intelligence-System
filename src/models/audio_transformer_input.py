@@ -10,12 +10,7 @@ from .positional_encoding import PositionalEncoding
 class AudioTransformerInput(nn.Module):
 
     def __init__(
-        self,
-        n_mels = 128,
-        patch_size = 25,
-        embed_dim = 256,
-        max_len = 1000,
-        dropout = 0.1
+        self, n_mels=128, patch_size=25, embed_dim=256, max_len=1000, dropout=0.1
     ):
         super().__init__()
 
@@ -25,9 +20,7 @@ class AudioTransformerInput(nn.Module):
             embed_dim=embed_dim,
         )
 
-        self.cls_token = nn.Parameter(
-            torch.zeros(1, 1, embed_dim)
-        )
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
 
         nn.init.normal_(self.cls_token, std=0.02)
 
@@ -41,17 +34,7 @@ class AudioTransformerInput(nn.Module):
         # Patch embedding
         # (B, N, D)
         # -------------------------
-        #print(
-        #    f"audio_transformer_input.py AudioTransformerInput.forward "
-        #    f"input: {tuple(x.shape)}"
-        #)
-
         x = self.patch_embed(x)
-
-        #print(
-        #    f"audio_transformer_input.py AudioTransformerInput.forward "
-        #    f"after_patch_embed: {tuple(x.shape)}"
-        #)
 
         # -------------------------
         # Add CLS token
