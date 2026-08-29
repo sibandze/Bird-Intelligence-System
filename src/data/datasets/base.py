@@ -119,7 +119,14 @@ class BaseSpectrogramDataset(Dataset):
         self,
         mel: np.ndarray,
     ) -> np.ndarray:
+        """
+        Normalize log-Mel spectrogram values.
 
+        Mel spectrograms are clipped to a fixed dB range before scaling
+        to [0, 1]. Using a global range preserves relative loudness
+        between recordings and avoids the distortions introduced by
+        per-sample min-max normalization.
+        """
         mel = np.clip(
             mel,
             self.min_db,
