@@ -2,9 +2,11 @@
 
 from dataclasses import dataclass
 
+
 @dataclass(frozen=True)
 class WindowIndex:
     """Represents a discrete temporal slice within a specific recording."""
+
     recording_idx: int
     start_frame: int
     end_frame: int
