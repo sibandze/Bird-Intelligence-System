@@ -29,9 +29,11 @@ Linear
         ▼
 234 Logits
 """
+
 import torch
 import torch.nn as nn
 from .encoder import Encoder
+
 
 class SupervisedTransformer(nn.Module):
     """
@@ -39,33 +41,29 @@ class SupervisedTransformer(nn.Module):
 
     Architecture: Mel -> PatchEmbed -> Transformer -> CLS -> MLP Head -> Logits
     """
-    def __init__(
-        self,
-        config: dict,
-        num_classes: int,
-        device: str = "cpu"
-    ):
-        super().__init__()
-        audio_cfg = config['audio']
-        model_cfg = config['model']
 
-        n_mels = audio_cfg['n_mels']
-        patch_size = model_cfg['patch_size']
-        embed_dim = model_cfg['embed_dim']
-        segment_size = audio_cfg['segment_size']
+    def __init__(self, config: dict, num_classes: int, device: str = "cpu"):
+        super().__init__()
+        audio_cfg = config["audio"]
+        model_cfg = config["model"]
+
+        n_mels = audio_cfg["n_mels"]
+        patch_size = model_cfg["patch_size"]
+        embed_dim = model_cfg["embed_dim"]
+        segment_size = audio_cfg["segment_size"]
 
         num_patches = segment_size // patch_size
-        max_len = num_patches + 1 + 10 # +1 CLS, + buffer
+        max_len = num_patches + 1 + 10  # +1 CLS, + buffer
 
         self.encoder = Encoder(
             n_mels=n_mels,
             patch_size=patch_size,
             embed_size=embed_dim,
-            num_layers=model_cfg['num_layers'],
-            heads=model_cfg['heads'],
+            num_layers=model_cfg["num_layers"],
+            heads=model_cfg["heads"],
             device=device,
-            forward_expansion=model_cfg['forward_expansion'],
-            dropout=model_cfg['dropout'],
+            forward_expansion=model_cfg["forward_expansion"],
+            dropout=model_cfg["dropout"],
             max_len=max_len,
         )
 
@@ -74,8 +72,8 @@ class SupervisedTransformer(nn.Module):
             nn.LayerNorm(embed_dim),
             nn.Linear(embed_dim, embed_dim),
             nn.GELU(),
-            nn.Dropout(model_cfg['dropout']),
-            nn.Linear(embed_dim, num_classes)
+            nn.Dropout(model_cfg["dropout"]),
+            nn.Linear(embed_dim, num_classes),
         )
         self._init_weights()
 
@@ -97,15 +95,10 @@ class SupervisedTransformer(nn.Module):
         returns: (B, num_classes) logits
         """
         # Encoder out: (B, N_patches+1, embed_dim)
-        #print(
-        #    f"supervised_transformer.py SupervisedTransformer.forward "
-        #    f"x: {tuple(x.shape)}"
-        #)
-
         enc_out = self.encoder(x, mask)
 
         # CLS token is first token
-        cls_token = enc_out[:, 0] # (B, embed_dim)
+        cls_token = enc_out[:, 0]  # (B, embed_dim)
 
-        logits = self.head(cls_token) # (B, num_classes)
+        logits = self.head(cls_token)  # (B, num_classes)
         return logits
