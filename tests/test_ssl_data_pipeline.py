@@ -48,6 +48,7 @@ from src.models.encoders.cnn import CNNEncoder
 # Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def mock_spectrogram():
     """Create a mock mel spectrogram with realistic values."""
@@ -61,16 +62,18 @@ def mock_spectrogram():
 @pytest.fixture
 def mock_metadata_df():
     """Create a minimal metadata DataFrame."""
-    return pd.DataFrame({
-        'scientific_name': ['Species_A', 'Species_B', 'Species_A'],
-        'scientific_name_id': [0, 1, 0],
-        'local_spectrogram_path': [
-            '/fake/path/spec1.npy',
-            '/fake/path/spec2.npy',
-            '/fake/path/spec3.npy',
-        ],
-        'total_frames': [500, 300, 450],
-    })
+    return pd.DataFrame(
+        {
+            "scientific_name": ["Species_A", "Species_B", "Species_A"],
+            "scientific_name_id": [0, 1, 0],
+            "local_spectrogram_path": [
+                "/fake/path/spec1.npy",
+                "/fake/path/spec2.npy",
+                "/fake/path/spec3.npy",
+            ],
+            "total_frames": [500, 300, 450],
+        }
+    )
 
 
 @pytest.fixture
@@ -83,15 +86,16 @@ def mock_window():
 def base_ssl_config():
     """Base configuration for SSL datasets."""
     return {
-        'segment_size': 256,
-        'min_db': -80.0,
-        'max_db': 0.0,
+        "segment_size": 256,
+        "min_db": -80.0,
+        "max_db": 0.0,
     }
 
 
 # ============================================================================
 # Augmentation Pipeline Tests
 # ============================================================================
+
 
 class TestBaseAugmentation:
     """Test augmentation base class."""
@@ -104,8 +108,10 @@ class TestBaseAugmentation:
         class ConcreteAug(BaseAugmentation):
             def __call__(self, x):
                 return x
+
             def get_params(self):
                 return {}
+
         aug = ConcreteAug()
         assert aug(torch.ones(1, 128, 256)).shape == (1, 128, 256)
 
@@ -153,9 +159,9 @@ class TestAcousticAugmentation:
         """get_params should return configuration dict."""
         aug = AcousticAugmentation(noise_level=0.03, noise_prob=0.8)
         params = aug.get_params()
-        assert params['type'] == 'acoustic'
-        assert params['noise_level'] == 0.03
-        assert params['noise_prob'] == 0.8
+        assert params["type"] == "acoustic"
+        assert params["noise_level"] == 0.03
+        assert params["noise_prob"] == 0.8
 
 
 class TestSpecAugmentation:
@@ -238,9 +244,9 @@ class TestSpecAugmentation:
             time_mask_param=12,
         )
         params = aug.get_params()
-        assert params['type'] == 'specaugment'
-        assert params['num_freq_masks'] == 3
-        assert params['freq_mask_param'] == 8
+        assert params["type"] == "specaugment"
+        assert params["num_freq_masks"] == 3
+        assert params["freq_mask_param"] == 8
 
 
 class TestAugmentationPipeline:
@@ -259,25 +265,31 @@ class TestAugmentationPipeline:
         class TrackedAug(BaseAugmentation):
             def __init__(self, name):
                 self.name = name
+
             def __call__(self, x):
                 calls.append(self.name)
                 return x
-            def get_params(self):
-                return {'name': self.name}
 
-        pipeline = AugmentationPipeline([
-            TrackedAug('first'),
-            TrackedAug('second'),
-        ])
+            def get_params(self):
+                return {"name": self.name}
+
+        pipeline = AugmentationPipeline(
+            [
+                TrackedAug("first"),
+                TrackedAug("second"),
+            ]
+        )
         pipeline(torch.rand(1, 128, 256))
-        assert calls == ['first', 'second']
+        assert calls == ["first", "second"]
 
     def test_combined_pipeline(self):
         """Acoustic + SpecAugment should work together."""
-        pipeline = AugmentationPipeline([
-            AcousticAugmentation(noise_level=0.01, noise_prob=1.0),
-            SpecAugmentation(prob=1.0, freq_mask_param=10),
-        ])
+        pipeline = AugmentationPipeline(
+            [
+                AcousticAugmentation(noise_level=0.01, noise_prob=1.0),
+                SpecAugmentation(prob=1.0, freq_mask_param=10),
+            ]
+        )
         x = torch.rand(2, 128, 256)
         x_aug = pipeline(x)
         assert x_aug.shape == x.shape
@@ -294,35 +306,43 @@ class TestAugmentationPipeline:
 
     def test_pipeline_repr(self):
         """String representation should list augmentations."""
-        pipeline = AugmentationPipeline([
-            AcousticAugmentation(),
-            SpecAugmentation(),
-        ])
+        pipeline = AugmentationPipeline(
+            [
+                AcousticAugmentation(),
+                SpecAugmentation(),
+            ]
+        )
         repr_str = repr(pipeline)
-        assert 'AcousticAugmentation' in repr_str
-        assert 'SpecAugmentation' in repr_str
+        assert "AcousticAugmentation" in repr_str
+        assert "SpecAugmentation" in repr_str
 
     def test_pipeline_params(self):
         """get_params should include all sub-params."""
-        pipeline = AugmentationPipeline([
-            AcousticAugmentation(noise_level=0.03),
-            SpecAugmentation(num_freq_masks=2),
-        ])
+        pipeline = AugmentationPipeline(
+            [
+                AcousticAugmentation(noise_level=0.03),
+                SpecAugmentation(num_freq_masks=2),
+            ]
+        )
         params = pipeline.get_params()
-        assert params['num_augmentations'] == 2
-        assert len(params['augmentations']) == 2
+        assert params["num_augmentations"] == 2
+        assert len(params["augmentations"]) == 2
 
 
 # ============================================================================
 # SSL Dataset Tests
 # ============================================================================
 
+
 class TestSSLBirdSongDataset:
     """Test SSL dataset for dual-view generation."""
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_dual_views_are_different(
-        self, mock_load, mock_metadata_df, base_ssl_config,
+        self,
+        mock_load,
+        mock_metadata_df,
+        base_ssl_config,
     ):
         """Two views of same window should differ due to augmentation."""
         # Create fake spectrogram with distinct values
@@ -331,8 +351,8 @@ class TestSSLBirdSongDataset:
 
         dataset = SSLBirdSongDataset(
             df=mock_metadata_df,
-            acoustic_aug_config={'enabled': True, 'noise_level': 0.1},
-            spec_aug_config={'enabled': True, 'prob': 1.0},
+            acoustic_aug_config={"enabled": True, "noise_level": 0.1},
+            spec_aug_config={"enabled": True, "prob": 1.0},
             apply_augmentation=True,
             **base_ssl_config,
         )
@@ -341,7 +361,7 @@ class TestSSLBirdSongDataset:
         assert not torch.equal(x1, x2), "Dual views should differ"
         assert x1.shape == x2.shape
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_view_shapes(self, mock_load, mock_metadata_df, base_ssl_config):
         """Each view should have shape [1, n_mels, segment_size]."""
         mel = np.random.randn(128, 500).astype(np.float32)
@@ -353,13 +373,16 @@ class TestSSLBirdSongDataset:
         )
 
         x1, x2 = dataset[0]
-        expected_shape = (128, base_ssl_config['segment_size'])
+        expected_shape = (128, base_ssl_config["segment_size"])
         assert x1.shape == expected_shape, f"Expected {expected_shape}, got {x1.shape}"
         assert x2.shape == expected_shape
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_epoch_changes_windows(
-        self, mock_load, mock_metadata_df, base_ssl_config,
+        self,
+        mock_load,
+        mock_metadata_df,
+        base_ssl_config,
     ):
         """Window indices should change with epoch for sliding strategy."""
         mel = np.random.randn(128, 1000).astype(np.float32)
@@ -367,7 +390,7 @@ class TestSSLBirdSongDataset:
 
         dataset = SSLBirdSongDataset(
             df=mock_metadata_df,
-            window_config={'strategy': 'sliding', 'stride': 256},
+            window_config={"strategy": "sliding", "stride": 256},
             **base_ssl_config,
         )
 
@@ -377,20 +400,21 @@ class TestSSLBirdSongDataset:
         windows_epoch1 = list(dataset.windows)
 
         # Windows should be different between epochs
-        assert windows_epoch0 != windows_epoch1, \
-            "Sliding windows should change between epochs"
+        assert (
+            windows_epoch0 != windows_epoch1
+        ), "Sliding windows should change between epochs"
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_window_strategies(self, mock_load, mock_metadata_df, base_ssl_config):
         """Test different window strategies produce correct indices."""
         mel = np.random.randn(128, 800).astype(np.float32)
         mock_load.return_value = mel
-        segment_size = base_ssl_config['segment_size']
+        segment_size = base_ssl_config["segment_size"]
 
         for strategy, config in [
-            ('random', {'strategy': 'random'}),
-            ('center', {'strategy': 'center'}),
-            ('sliding', {'strategy': 'sliding', 'stride': 256}),
+            ("random", {"strategy": "random"}),
+            ("center", {"strategy": "center"}),
+            ("sliding", {"strategy": "sliding", "stride": 256}),
         ]:
             dataset = SSLBirdSongDataset(
                 df=mock_metadata_df,
@@ -400,12 +424,17 @@ class TestSSLBirdSongDataset:
             assert len(dataset) == len(mock_metadata_df)
 
             for window in dataset.windows:
-                assert window.end_frame - window.start_frame == segment_size or \
-                       window.end_frame <= mel.shape[1]
+                assert (
+                    window.end_frame - window.start_frame == segment_size
+                    or window.end_frame <= mel.shape[1]
+                )
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_short_spectrogram_padding(
-        self, mock_load, mock_metadata_df, base_ssl_config,
+        self,
+        mock_load,
+        mock_metadata_df,
+        base_ssl_config,
     ):
         """Spectrograms shorter than segment_size should be padded."""
         short_mel = np.random.randn(128, 100).astype(np.float32)  # < 256
@@ -417,11 +446,14 @@ class TestSSLBirdSongDataset:
         )
 
         x1, x2 = dataset[0]
-        assert x1.shape == (128, base_ssl_config['segment_size'])
+        assert x1.shape == (128, base_ssl_config["segment_size"])
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_precomputed_total_frames(
-        self, mock_load, mock_metadata_df, base_ssl_config,
+        self,
+        mock_load,
+        mock_metadata_df,
+        base_ssl_config,
     ):
         """Should use total_frames column without loading spectrogram."""
         dataset = SSLBirdSongDataset(
@@ -439,7 +471,7 @@ class TestSSLBirdSongDataset:
 class TestSSLFrameworkAdapters:
     """Test framework-specific dataset adapters."""
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_simclr_dataset(self, mock_load, mock_metadata_df, base_ssl_config):
         """SimCLRDataset should produce valid output."""
         mock_load.return_value = np.random.randn(128, 500).astype(np.float32)
@@ -449,7 +481,7 @@ class TestSSLFrameworkAdapters:
         assert x1.shape == (128, 256)
         assert x2.shape == (128, 256)
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_byol_dataset(self, mock_load, mock_metadata_df, base_ssl_config):
         """BYOLDataset should produce valid output."""
         mock_load.return_value = np.random.randn(128, 500).astype(np.float32)
@@ -458,7 +490,7 @@ class TestSSLFrameworkAdapters:
         x1, x2 = dataset[0]
         assert x1.shape == (128, 256)
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_moco_dataset(self, mock_load, mock_metadata_df, base_ssl_config):
         """MoCoDataset should produce valid output."""
         mock_load.return_value = np.random.randn(128, 500).astype(np.float32)
@@ -473,42 +505,35 @@ class TestSSLCollateFunctions:
 
     def test_simclr_collate(self):
         """simclr_collate_fn should return x1, x2 as separate tensors."""
-        batch = [
-            (torch.randn(128, 256), torch.randn(128, 256))
-            for _ in range(4)
-        ]
+        batch = [(torch.randn(128, 256), torch.randn(128, 256)) for _ in range(4)]
         x1, x2 = simclr_collate_fn(batch)
         assert x1.shape == (4, 128, 256)
         assert x2.shape == (4, 128, 256)
 
     def test_byol_collate(self):
         """byol_collate_fn should return x1, x2 as separate tensors."""
-        batch = [
-            (torch.randn(128, 256), torch.randn(128, 256))
-            for _ in range(4)
-        ]
+        batch = [(torch.randn(128, 256), torch.randn(128, 256)) for _ in range(4)]
         x1, x2 = byol_collate_fn(batch)
         assert x1.shape == (4, 128, 256)
         assert x2.shape == (4, 128, 256)
 
     def test_moco_collate(self):
         """moco_collate_fn should return query and key tensors."""
-        batch = [
-            (torch.randn(128, 256), torch.randn(128, 256))
-            for _ in range(4)
-        ]
+        batch = [(torch.randn(128, 256), torch.randn(128, 256)) for _ in range(4)]
         im_q, im_k = moco_collate_fn(batch)
         assert im_q.shape == (4, 128, 256)
         assert im_k.shape == (4, 128, 256)
+
 
 # ============================================================================
 # DataLoader Integration Tests
 # ============================================================================
 
+
 class TestDataLoaderIntegration:
     """Test dataset integration with DataLoader."""
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_dataloader_shapes(self, mock_load, mock_metadata_df, base_ssl_config):
         """DataLoader should produce correct batch shapes."""
         from torch.utils.data import DataLoader
@@ -528,9 +553,12 @@ class TestDataLoaderIntegration:
             assert x2.shape == (2, 128, 256)
             break
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_epoch_synchronization(
-        self, mock_load, mock_metadata_df, base_ssl_config,
+        self,
+        mock_load,
+        mock_metadata_df,
+        base_ssl_config,
     ):
         """set_epoch should be callable on dataset."""
         mock_load.return_value = np.random.randn(128, 500).astype(np.float32)
@@ -547,10 +575,11 @@ class TestDataLoaderIntegration:
 # Supervised Dataset Tests
 # ============================================================================
 
+
 class TestSupervisedDataset:
     """Test supervised dataset functionality."""
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_basic_output(self, mock_load, mock_metadata_df, base_ssl_config):
         """Should return (x, y) tuple."""
         mock_load.return_value = np.random.randn(128, 500).astype(np.float32)
@@ -566,9 +595,12 @@ class TestSupervisedDataset:
         assert y.dtype == torch.long
         assert y.dim() == 0  # Scalar
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_label_contiguous_mapping(
-        self, mock_load, mock_metadata_df, base_ssl_config,
+        self,
+        mock_load,
+        mock_metadata_df,
+        base_ssl_config,
     ):
         """Labels should be mapped to contiguous 0..N-1."""
         mock_load.return_value = np.random.randn(128, 500).astype(np.float32)
@@ -583,9 +615,12 @@ class TestSupervisedDataset:
             _, y = dataset[i]
             assert 0 <= y.item() < dataset.num_classes
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_label_to_idx_mapping(
-        self, mock_load, mock_metadata_df, base_ssl_config,
+        self,
+        mock_load,
+        mock_metadata_df,
+        base_ssl_config,
     ):
         """label_to_idx should map species names to contiguous indices."""
         mock_load.return_value = np.random.randn(128, 500).astype(np.float32)
@@ -596,19 +631,22 @@ class TestSupervisedDataset:
         )
 
         # Species_A -> 0, Species_B -> 1
-        assert dataset.label_to_idx['Species_A'] == 0
-        assert dataset.label_to_idx['Species_B'] == 1
-        assert dataset.idx_to_label[0] == 'Species_A'
-        assert dataset.idx_to_label[1] == 'Species_B'
+        assert dataset.label_to_idx["Species_A"] == 0
+        assert dataset.label_to_idx["Species_B"] == 1
+        assert dataset.idx_to_label[0] == "Species_A"
+        assert dataset.idx_to_label[1] == "Species_B"
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_external_label_mapping(
-        self, mock_load, mock_metadata_df, base_ssl_config,
+        self,
+        mock_load,
+        mock_metadata_df,
+        base_ssl_config,
     ):
         """Should accept external label_to_idx."""
         mock_load.return_value = np.random.randn(128, 500).astype(np.float32)
 
-        external_mapping = {'Species_A': 5, 'Species_B': 3}
+        external_mapping = {"Species_A": 5, "Species_B": 3}
         dataset = SupervisedBirdSongDataset(
             df=mock_metadata_df,
             label_to_idx=external_mapping,
@@ -621,9 +659,12 @@ class TestSupervisedDataset:
         assert y1.item() == 3
         assert dataset.num_classes == 2
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
+    @patch("src.data.datasets.base.load_local_spectrogram")
     def test_spec_augment_on_supervised(
-        self, mock_load, mock_metadata_df, base_ssl_config,
+        self,
+        mock_load,
+        mock_metadata_df,
+        base_ssl_config,
     ):
         """SpecAugment should be applied during training."""
         mock_load.return_value = np.ones((128, 500), dtype=np.float32)
@@ -631,14 +672,14 @@ class TestSupervisedDataset:
         train_dataset = SupervisedBirdSongDataset(
             df=mock_metadata_df,
             train=True,
-            spec_aug_config={'enabled': True, 'prob': 1.0, 'time_mask_param': 50},
+            spec_aug_config={"enabled": True, "prob": 1.0, "time_mask_param": 50},
             **base_ssl_config,
         )
 
         test_dataset = SupervisedBirdSongDataset(
             df=mock_metadata_df,
             train=False,
-            spec_aug_config={'enabled': True, 'prob': 1.0, 'time_mask_param': 50},
+            spec_aug_config={"enabled": True, "prob": 1.0, "time_mask_param": 50},
             **base_ssl_config,
         )
 
@@ -651,28 +692,29 @@ class TestSupervisedDataset:
 
     def test_missing_label_error(self, mock_metadata_df, base_ssl_config):
         """Should raise error if DataFrame has unmapped labels."""
-        incomplete_mapping = {'Species_A': 0}  # Missing Species_B
+        incomplete_mapping = {"Species_A": 0}  # Missing Species_B
 
-        with pytest.raises(ValueError, match='not in label_to_idx'):
+        with pytest.raises(ValueError, match="not in label_to_idx"):
             SupervisedBirdSongDataset(
                 df=mock_metadata_df,
                 label_to_idx=incomplete_mapping,
                 **base_ssl_config,
             )
 
+
 class TestEdgeCases:
 
-    @patch('src.data.datasets.base.load_local_spectrogram')
-    def test_legacy_total_frames_fallback(
-        self, mock_load, base_ssl_config
-    ):
+    @patch("src.data.datasets.base.load_local_spectrogram")
+    def test_legacy_total_frames_fallback(self, mock_load, base_ssl_config):
         """Test _get_total_frames fallback when total_frames column is NaN."""
         # DataFrame without total_frames
-        df_no_frames = pd.DataFrame({
-            'scientific_name': ['Species_A'],
-            'scientific_name_id': [0],
-            'local_spectrogram_path': ['/fake/path/spec1.npy'],
-        })
+        df_no_frames = pd.DataFrame(
+            {
+                "scientific_name": ["Species_A"],
+                "scientific_name_id": [0],
+                "local_spectrogram_path": ["/fake/path/spec1.npy"],
+            }
+        )
         mel = np.random.randn(128, 600).astype(np.float32)
         mock_load.return_value = mel
 
@@ -700,10 +742,10 @@ class TestEdgeCases:
             calls.append((a, b))
             return original_random(a, b)
 
-        with patch('random.randint', side_effect=tracked_randint):
+        with patch("random.randint", side_effect=tracked_randint):
             dataset = SSLBirdSongDataset(
                 df=mock_metadata_df,
-                window_config={'strategy': 'random'},
+                window_config={"strategy": "random"},
                 **base_ssl_config,
             )
             windows_epoch0 = list(dataset.windows)
@@ -712,23 +754,28 @@ class TestEdgeCases:
             windows_epoch1 = list(dataset.windows)
 
         # Windows should change between epochs
-        assert windows_epoch0!= windows_epoch1
+        assert windows_epoch0 != windows_epoch1
         # But if we reset to epoch 0, we should get same as before
         dataset.set_epoch(0)
         windows_epoch0_again = list(dataset.windows)
         assert windows_epoch0 == windows_epoch0_again
+
 
 class TestCNNEncoder:
     """Test the CNN encoder output shapes."""
 
     def test_forward_and_features_shapes(self):
         """Verify forward() and forward_features() return expected shapes."""
-        x = torch.randn(4, 128, 256)          # [B, n_mels, time]
+        x = torch.randn(4, 128, 256)  # [B, n_mels, time]
         encoder = CNNEncoder()
 
-        h = encoder(x)                        # pooled embedding
+        h = encoder(x)  # pooled embedding
         assert h.shape == (4, 512), f"Expected (4, 512), got {h.shape}"
 
         features = encoder.forward_features(x)
-        assert features.shape == (4, 512, 8, 16), \
-            f"Expected (4, 512, 8, 16), got {features.shape}"
+        assert features.shape == (
+            4,
+            512,
+            8,
+            16,
+        ), f"Expected (4, 512, 8, 16), got {features.shape}"
