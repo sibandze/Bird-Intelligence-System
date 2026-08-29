@@ -10,9 +10,9 @@ def get_gpu_memory_info(device: torch.device) -> Dict[str, float]:
         return {}
 
     return {
-        "gpu_allocated_mb": torch.cuda.memory_allocated(device) / (1024 ** 2),
-        "gpu_reserved_mb": torch.cuda.memory_reserved(device) / (1024 ** 2),
-        "gpu_peak_mb": torch.cuda.max_memory_allocated(device) / (1024 ** 2),
+        "gpu_allocated_mb": torch.cuda.memory_allocated(device) / (1024**2),
+        "gpu_reserved_mb": torch.cuda.memory_reserved(device) / (1024**2),
+        "gpu_peak_mb": torch.cuda.max_memory_allocated(device) / (1024**2),
     }
 
 
@@ -23,5 +23,7 @@ def log_memory_usage(prefix: str = "", device: torch.device = None):
 
     info = get_gpu_memory_info(device)
     if info:
-        print(f"[{prefix}] GPU Alloc: {info['gpu_allocated_mb']:.1f}MB | "
-              f"Res: {info['gpu_reserved_mb']:.1f}MB | Peak: {info['gpu_peak_mb']:.1f}MB")
+        print(
+            f"[{prefix}] GPU Alloc: {info['gpu_allocated_mb']:.1f}MB | "
+            f"Res: {info['gpu_reserved_mb']:.1f}MB | Peak: {info['gpu_peak_mb']:.1f}MB"
+        )
