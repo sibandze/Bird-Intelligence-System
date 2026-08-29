@@ -9,6 +9,7 @@ import itertools
 @dataclass
 class HyperparameterSweep:
     """Defines a sweep over hyperparameter space."""
+
     name: str
     params: Dict[str, List[Any]]
     description: str = ""
@@ -29,14 +30,8 @@ BASELINE_LEARNING_RATE_SWEEP = HyperparameterSweep(
     name="baseline_lr_sweep",
     description="Sweep over learning rates for baseline model",
     params={
-        "learning_rate": [
-            1e-5,
-            5e-5,
-            1e-4,
-            5e-4,
-            1e-3
-        ],
-    }
+        "learning_rate": [1e-5, 5e-5, 1e-4, 5e-4, 1e-3],
+    },
 )
 
 BASELINE_BATCH_SIZE_SWEEP = HyperparameterSweep(
@@ -44,7 +39,7 @@ BASELINE_BATCH_SIZE_SWEEP = HyperparameterSweep(
     description="Sweep over batch sizes for baseline model",
     params={
         "batch_size": [16, 32, 64],
-    }
+    },
 )
 
 BASELINE_ARCHITECTURE_SWEEP = HyperparameterSweep(
@@ -54,7 +49,7 @@ BASELINE_ARCHITECTURE_SWEEP = HyperparameterSweep(
         "embed_dim": [128, 256, 512],
         "num_layers": [3, 6, 12],
         "heads": [4, 8, 16],
-    }
+    },
 )
 
 BASELINE_DROPOUT_SWEEP = HyperparameterSweep(
@@ -62,7 +57,7 @@ BASELINE_DROPOUT_SWEEP = HyperparameterSweep(
     description="Sweep over dropout rates for regularization",
     params={
         "dropout": [0.0, 0.1, 0.2, 0.3],
-    }
+    },
 )
 
 BASELINE_AUGMENTATION_SWEEP = HyperparameterSweep(
@@ -72,7 +67,7 @@ BASELINE_AUGMENTATION_SWEEP = HyperparameterSweep(
         "spec_aug_prob": [0.0, 0.3, 0.5, 0.7],
         "freq_mask_param": [3, 6, 10],
         "time_mask_param": [5, 10, 20],
-    }
+    },
 )
 
 # ===== TARGETED EXPLORATION SWEEPS =====
@@ -83,16 +78,22 @@ FOCUSED_LR_MOMENTUM_SWEEP = HyperparameterSweep(
     params={
         "learning_rate": [1e-4, 3e-4, 5e-4],
         "weight_decay": [0.0, 1e-5, 1e-4],
-    }
+    },
 )
 
 WARMUP_SCHEDULER_SWEEP = HyperparameterSweep(
     name="warmup_scheduler",
     description="Compare different warmup and scheduling strategies",
     params={
-        "scheduler_type": ["constant", "cosine", "linear_decay", "reduce_on_plateau", "cosine_warm_restarts"],
+        "scheduler_type": [
+            "constant",
+            "cosine",
+            "linear_decay",
+            "reduce_on_plateau",
+            "cosine_warm_restarts",
+        ],
         "warmup_steps": [0, 500, 1000],
-    }
+    },
 )
 
 SCHEDULER_FINETUNE_SWEEP = HyperparameterSweep(
@@ -102,7 +103,7 @@ SCHEDULER_FINETUNE_SWEEP = HyperparameterSweep(
         "scheduler_type": ["cosine"],
         "warmup_steps": [250, 500, 1000, 2000],
         "min_lr": [1e-6, 1e-5, 1e-4],
-    }
+    },
 )
 
 MIXED_PRECISION_SWEEP = HyperparameterSweep(
@@ -111,7 +112,7 @@ MIXED_PRECISION_SWEEP = HyperparameterSweep(
     params={
         "use_mixed_precision": [False, True],
         "learning_rate": [1e-4, 5e-4],
-    }
+    },
 )
 
 # ===== SWEEP SUITES =====
