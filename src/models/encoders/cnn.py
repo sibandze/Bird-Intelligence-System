@@ -54,10 +54,14 @@ class CNNEncoder(nn.Module):
 
         # Conv Block 2: [B, 64, 64, T/2] → [B, 128, 32, T/4]
         self.conv2 = nn.Sequential(
-            nn.Conv2d(base_channels, base_channels * 2, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(
+                base_channels, base_channels * 2, kernel_size=3, stride=1, padding=1
+            ),
             nn.BatchNorm2d(base_channels * 2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(base_channels * 2, base_channels * 2, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(
+                base_channels * 2, base_channels * 2, kernel_size=3, stride=1, padding=1
+            ),
             nn.BatchNorm2d(base_channels * 2),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=(2, 2)),
@@ -65,10 +69,14 @@ class CNNEncoder(nn.Module):
 
         # Conv Block 3: [B, 128, 32, T/4] → [B, 256, 16, T/8]
         self.conv3 = nn.Sequential(
-            nn.Conv2d(base_channels * 2, base_channels * 4, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(
+                base_channels * 2, base_channels * 4, kernel_size=3, stride=1, padding=1
+            ),
             nn.BatchNorm2d(base_channels * 4),
             nn.ReLU(inplace=True),
-            nn.Conv2d(base_channels * 4, base_channels * 4, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(
+                base_channels * 4, base_channels * 4, kernel_size=3, stride=1, padding=1
+            ),
             nn.BatchNorm2d(base_channels * 4),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=(2, 2)),
@@ -76,10 +84,14 @@ class CNNEncoder(nn.Module):
 
         # Conv Block 4: [B, 256, 16, T/8] → [B, 512, 8, T/16]
         self.conv4 = nn.Sequential(
-            nn.Conv2d(base_channels * 4, base_channels * 8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(
+                base_channels * 4, base_channels * 8, kernel_size=3, stride=1, padding=1
+            ),
             nn.BatchNorm2d(base_channels * 8),
             nn.ReLU(inplace=True),
-            nn.Conv2d(base_channels * 8, base_channels * 8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(
+                base_channels * 8, base_channels * 8, kernel_size=3, stride=1, padding=1
+            ),
             nn.BatchNorm2d(base_channels * 8),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=(2, 2)),
@@ -107,7 +119,7 @@ class CNNEncoder(nn.Module):
         """Initialize weights with He initialization."""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
@@ -153,10 +165,10 @@ class CNNEncoder(nn.Module):
                 S = time_steps / 16
                 D = base_channels * 8 = 512
         """
-        x = self.forward_features(x)       # [B, 512, 8, T/16]
-        x = self.freq_pool(x)              # [B, 512, 1, T/16]
-        x = x.squeeze(2)                   # [B, 512, T/16]
-        return x.transpose(1, 2)           # [B, T/16, 512]
+        x = self.forward_features(x)  # [B, 512, 8, T/16]
+        x = self.freq_pool(x)  # [B, 512, 1, T/16]
+        x = x.squeeze(2)  # [B, 512, T/16]
+        return x.transpose(1, 2)  # [B, T/16, 512]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -171,12 +183,12 @@ class CNNEncoder(nn.Module):
         Returns:
             h: Embedding [B, embed_dim]
         """
-        x = self.forward_features(x)       # [B, 512, 8, T/16]
-        x = self.freq_pool(x)              # [B, 512, 1, T/16]
-        x = self.time_pool(x)              # [B, 512, 1, 8]
-        x = x.view(x.size(0), -1)          # [B, 4096]
+        x = self.forward_features(x)  # [B, 512, 8, T/16]
+        x = self.freq_pool(x)  # [B, 512, 1, T/16]
+        x = self.time_pool(x)  # [B, 512, 1, 8]
+        x = x.view(x.size(0), -1)  # [B, 4096]
         x = self.dropout(x)
-        return self.embed(x)               # [B, embed_dim]
+        return self.embed(x)  # [B, embed_dim]
 
     def get_output_dim(self) -> int:
         """Return the output embedding dimension for forward()."""
