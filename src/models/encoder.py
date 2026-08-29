@@ -5,6 +5,7 @@ import torch.nn as nn
 from .audio_transformer_input import AudioTransformerInput
 from .transformer_block import TransformerBlock
 
+
 class Encoder(nn.Module):
     def __init__(
         self,
@@ -16,7 +17,7 @@ class Encoder(nn.Module):
         device,
         forward_expansion,
         dropout,
-        max_len = 1000,
+        max_len=1000,
     ):
         super(Encoder, self).__init__()
         self.embed_size = embed_size
@@ -27,8 +28,8 @@ class Encoder(nn.Module):
             n_mels=n_mels,
             patch_size=patch_size,
             embed_dim=embed_size,
-            max_len = max_len,
-            dropout = dropout,
+            max_len=max_len,
+            dropout=dropout,
         )
 
         # Stack of Transformer Blocks
@@ -53,15 +54,15 @@ class Encoder(nn.Module):
         """
 
         # (B, num_patches, embed_size)
-        #print(
+        # print(
         #    f"encoder.py Encoder.forward input: {tuple(x.shape)}"
-        #)
+        # )
 
         out = self.dropout(self.input_layer(x))
 
-        #print(
+        # print(
         #    f"encoder.py Encoder.forward output: {tuple(out.shape)}"
-        #)
+        # )
 
         # Pass through each transformer block
         for layer in self.layers:
