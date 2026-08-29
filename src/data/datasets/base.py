@@ -43,9 +43,7 @@ class BaseSpectrogramDataset(Dataset):
         # Initialize augmentation pipeline
         self.aug_pipeline = AugmentationPipeline()
 
-        self.window_strategy: BaseWindowStrategy = (
-            build_window_strategy(window_config)
-        )
+        self.window_strategy: BaseWindowStrategy = build_window_strategy(window_config)
 
         self._rebuild_window_index()
 
@@ -74,14 +72,12 @@ class BaseSpectrogramDataset(Dataset):
         Rebuild the temporal sample index for the current epoch.
         """
 
-        self.windows: list[WindowIndex] = (
-            self.window_strategy.build_window_index(
-                df=self.df,
-                segment_size=self.segment_size,
-                get_frames_fn=self._get_total_frames,
-                epoch=self.epoch,
-                is_train=self.train,
-            )
+        self.windows: list[WindowIndex] = self.window_strategy.build_window_index(
+            df=self.df,
+            segment_size=self.segment_size,
+            get_frames_fn=self._get_total_frames,
+            epoch=self.epoch,
+            is_train=self.train,
         )
 
     def set_epoch(self, epoch: int):
@@ -105,29 +101,18 @@ class BaseSpectrogramDataset(Dataset):
         row = self.df.iloc[window.recording_idx]
         mel = load_local_spectrogram(row["local_spectrogram_path"])
 
-        #print(
-        #    f"base.py _extract_window_tensor mel_loaded: {tuple(mel.shape)}"
-        #)
-
         mel = self._normalize(mel)
         T = mel.shape[1]
 
         if T <= self.segment_size:
             pad = self.segment_size - T
-            mel_crop = np.pad(mel, ((0, 0), (0, pad)), mode="constant", constant_values=0.0).astype(mel.dtype)
-            #print(
-            #    f"base.py _extract_window_tensor mel_crop 1: {tuple(mel_crop.shape)}"
-            #)
+            mel_crop = np.pad(
+                mel, ((0, 0), (0, pad)), mode="constant", constant_values=0.0
+            ).astype(mel.dtype)
         else:
-            mel_crop = mel[:, window.start_frame:window.end_frame]
-            #print(
-            #    f"base.py _extract_window_tensor mel_crop 2: {tuple(mel_crop.shape)}"
-            #)
+            mel_crop = mel[:, window.start_frame : window.end_frame]
 
         tensor = torch.from_numpy(mel_crop).float()
-        #print(
-        #    f"base.py _extract_window_tensor output: {tuple(tensor.shape)}"
-        #)
         return tensor
 
     def _normalize(
@@ -141,7 +126,4 @@ class BaseSpectrogramDataset(Dataset):
             self.max_db,
         )
 
-        return (
-            (mel - self.min_db)
-            / (self.max_db - self.min_db)
-        )
+        return (mel - self.min_db) / (self.max_db - self.min_db)
