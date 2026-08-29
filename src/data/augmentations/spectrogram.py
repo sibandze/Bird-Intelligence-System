@@ -3,6 +3,7 @@ import random
 import torch
 from .base import BaseAugmentation
 
+
 class SpecAugmentation(BaseAugmentation):
     """SpecAugment: Frequency and time masking augmentation."""
 
@@ -24,7 +25,7 @@ class SpecAugmentation(BaseAugmentation):
         self.time_mask_param = time_mask_param
 
     def __call__(self, mel_tensor: torch.Tensor) -> torch.Tensor:
-        #print(f"SpecAugmentation input: {tuple(mel_tensor.shape)}")
+        # print(f"SpecAugmentation input: {tuple(mel_tensor.shape)}")
 
         if not self.enabled:
             return mel_tensor
@@ -65,7 +66,7 @@ class SpecAugmentation(BaseAugmentation):
                 for _ in range(self.num_freq_masks):
                     f = random.randint(1, max_f)
                     f0 = random.randint(0, n_mels - f)
-                    mel_tensor[b, :, f0:f0 + f, :] = 0.0
+                    mel_tensor[b, :, f0 : f0 + f, :] = 0.0
 
             # Time masking
             if self.time_mask_param > 0:
@@ -73,30 +74,30 @@ class SpecAugmentation(BaseAugmentation):
                 for _ in range(self.num_time_masks):
                     t = random.randint(1, max_t)
                     t0 = random.randint(0, n_frames - t)
-                    mel_tensor[b, :, :, t0:t0 + t] = 0.0
+                    mel_tensor[b, :, :, t0 : t0 + t] = 0.0
 
-        #print(f"SpecAugmentation before_restore: {tuple(mel_tensor.shape)}")
+        # print(f"SpecAugmentation before_restore: {tuple(mel_tensor.shape)}")
 
         # Restore original shape
         if was_2d:
             mel_tensor = mel_tensor.squeeze(0).squeeze(0)  # [F, T]
         elif was_3d_batch:
-            mel_tensor = mel_tensor.squeeze(1)             # [B, F, T]
+            mel_tensor = mel_tensor.squeeze(1)  # [B, F, T]
         elif was_3d_single:
-            mel_tensor = mel_tensor.squeeze(0)             # [C, F, T]
+            mel_tensor = mel_tensor.squeeze(0)  # [C, F, T]
 
-        #print(f"SpecAugmentation output: {tuple(mel_tensor.shape)}")
+        # print(f"SpecAugmentation output: {tuple(mel_tensor.shape)}")
 
         return mel_tensor
 
     def get_params(self) -> dict:
         """Return current augmentation parameters for logging."""
         return {
-            'type': 'specaugment',
-            'enabled': self.enabled,
-            'prob': self.prob,
-            'num_freq_masks': self.num_freq_masks,
-            'freq_mask_param': self.freq_mask_param,
-            'num_time_masks': self.num_time_masks,
-            'time_mask_param': self.time_mask_param,
+            "type": "specaugment",
+            "enabled": self.enabled,
+            "prob": self.prob,
+            "num_freq_masks": self.num_freq_masks,
+            "freq_mask_param": self.freq_mask_param,
+            "num_time_masks": self.num_time_masks,
+            "time_mask_param": self.time_mask_param,
         }
