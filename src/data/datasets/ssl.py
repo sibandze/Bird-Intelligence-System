@@ -16,6 +16,7 @@ class SSLBirdSongDataset(BaseSpectrogramDataset):
         apply_augmentation: bool – whether to apply the augmentation pipeline.
     All other arguments are passed directly to BaseSpectrogramDataset via **kwargs.
     """
+
     def __init__(
         self,
         acoustic_aug_config: dict = None,
@@ -63,21 +64,29 @@ class SSLBirdSongDataset(BaseSpectrogramDataset):
         x2 = self._generate_view(window)
         return x1, x2
 
+
 # ---------------------------------------------------------------------
 # Framework Adapters & Collate Functions
 # ---------------------------------------------------------------------
 
+
 class SimCLRDataset(SSLBirdSongDataset):
     """SimCLR Specific Dataset Adapter."""
+
     pass
+
 
 class BYOLDataset(SSLBirdSongDataset):
     """BYOL Specific Dataset Adapter."""
+
     pass
+
 
 class MoCoDataset(SSLBirdSongDataset):
     """MoCo Specific Dataset Adapter."""
+
     pass
+
 
 def _ssl_dual_view_collate(batch):
     """
@@ -90,6 +99,7 @@ def _ssl_dual_view_collate(batch):
     x1 = torch.stack(view1_list, dim=0)  # [B, 1, F, T]
     x2 = torch.stack(view2_list, dim=0)
     return x1, x2
+
 
 # Framework-specific aliases
 # Keep separate names so we can extend them later without breaking API
