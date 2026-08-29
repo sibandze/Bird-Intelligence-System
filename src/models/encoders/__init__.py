@@ -2,4 +2,4 @@
 
 from .cnn import CNNEncoder
 
-__all__ = ['CNNEncoder']
+__all__ = ["CNNEncoder"]
