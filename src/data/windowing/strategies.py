@@ -27,6 +27,7 @@ class SlidingWindowStrategy(BaseWindowStrategy):
     This allows long recordings to be progressively exposed to the
     model across epochs without increasing dataset size.
     """
+
     def __init__(self, stride: int = 256):
         if stride <= 0:
             raise ValueError(f"Stride must be positive, got {stride}")
@@ -70,7 +71,9 @@ class SlidingWindowStrategy(BaseWindowStrategy):
 
         for idx, row in df.iterrows():
             total_frames = get_frames_fn(row, idx)
-            starts = self._build_starts(total_frames=total_frames, segment_size=segment_size)
+            starts = self._build_starts(
+                total_frames=total_frames, segment_size=segment_size
+            )
 
             if not is_train:
                 # Validation/test: return every deterministic window
@@ -98,6 +101,7 @@ class SlidingWindowStrategy(BaseWindowStrategy):
                 )
 
         return windows
+
 
 class RandomWindowStrategy(BaseWindowStrategy):
     """
