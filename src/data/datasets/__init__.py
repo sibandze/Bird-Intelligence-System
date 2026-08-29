@@ -13,13 +13,13 @@ from .ssl import (
 from .supervised import SupervisedBirdSongDataset
 
 __all__ = [
-    'BaseSpectrogramDataset',
-    'SSLBirdSongDataset',
-    'SimCLRDataset',
-    'BYOLDataset',
-    'MoCoDataset',
-    'simclr_collate_fn',
-    'byol_collate_fn',
-    'moco_collate_fn',
-    'SupervisedBirdSongDataset',
+    "BaseSpectrogramDataset",
+    "SSLBirdSongDataset",
+    "SimCLRDataset",
+    "BYOLDataset",
+    "MoCoDataset",
+    "simclr_collate_fn",
+    "byol_collate_fn",
+    "moco_collate_fn",
+    "SupervisedBirdSongDataset",
 ]
