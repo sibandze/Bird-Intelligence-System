@@ -177,6 +177,9 @@ class PrecisionManager:
     ):
         """
         AMP-safe gradient clipping.
+        Returns:
+            torch.Tensor
+                Total gradient norm before clipping.
         """
 
         if max_norm is None:
@@ -184,7 +187,7 @@ class PrecisionManager:
 
         self.unscale_gradients(optimizer)
 
-        torch.nn.utils.clip_grad_norm_(
+        return torch.nn.utils.clip_grad_norm_(
             parameters,
             max_norm=max_norm,
         )
