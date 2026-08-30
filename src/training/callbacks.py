@@ -178,48 +178,67 @@ class CheckpointCallback(Callback):
 
     def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
         current_score = logs.get(self.monitor)
-        if current_score is None:
-            # Monitored metric missing – skip best model logic, but still save last.
-            current_score = float("-inf") if self.mode == "max" else float("inf")
-
-        # ---------------------------------------------------------
-        # Build checkpoint with full logs
-        # ---------------------------------------------------------
+        
+        improved = (
+            current_score > self.best_score
+            if self.mode == "max"
+            else current_score < self.best_score
+        )
+        
+        if improved:
+            self.best_score = current_score
+            
         checkpoint = {
             "epoch": epoch + 1,
-            "logs": logs,  # store all metrics
+            "logs": logs,
             "model_state_dict": trainer.model.state_dict(),
             "optimizer_state_dict": trainer.optimizer.state_dict(),
             "scheduler_state_dict": (
-                trainer.scheduler.state_dict() if trainer.scheduler else None
+                trainer.scheduler.state_dict()
+                if trainer.scheduler else None
             ),
             "precision_state_dict": trainer.precision.state_dict(),
             "callbacks_state_dict": trainer.cb_runner.state_dict(),
             "torch_rng_state": torch.get_rng_state(),
             "cuda_rng_state": (
-                torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+                torch.cuda.get_rng_state_all()
+                if torch.cuda.is_available()
+                else None
             ),
             "git_commit": getattr(trainer, "git_hash", None),
             "torch_version": torch.__version__,
-            "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
+            "cuda_version": (
+                torch.version.cuda
+                if torch.cuda.is_available()
+                else None
+            ),
         }
-
-        # Always save latest
-        torch.save(checkpoint, self.run_dir / "checkpoint_last.pth")
-        torch.save(trainer.model.state_dict(), self.run_dir / "last_model.pth")
-
-        # Determine if current score is best
-        improved = (
-            (current_score > self.best_score)
-            if self.mode == "max"
-            else (current_score < self.best_score)
+        
+        torch.save(
+            checkpoint,
+            self.run_dir / "checkpoint_last.pth"
         )
-
+        
+        torch.save(
+            trainer.model.state_dict(),
+            self.run_dir / "last_model.pth"
+        )
+        
         if improved:
-            self.best_score = current_score
-            torch.save(checkpoint, self.run_dir / "checkpoint_best.pth")
-            torch.save(trainer.model.state_dict(), self.run_dir / "best_model.pth")
-            print(f"    ✓ Saved new best model ({self.monitor}: {current_score:.4f})")
+            torch.save(
+                checkpoint,
+                self.run_dir / "checkpoint_best.pth"
+            )
+            
+            torch.save(
+                trainer.model.state_dict(),
+                self.run_dir / "best_model.pth"
+            )            
+            
+            print(
+                f"    ✓ Saved new best model "
+                f"({self.monitor}: {current_score:.4f})"
+            )
 
     def state_dict(self) -> Dict[str, Any]:
         return {"best_score": self.best_score}
