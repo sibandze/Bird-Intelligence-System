@@ -255,11 +255,17 @@ class SimCLRExperimentTrainer:
 
                 grad_clip = self.config["training"].get("gradient_clip")
                 
-                grad_norm = self.precision.clip_gradient(
-                    optimizer,
-                    self.model.parameters(),
-                    grad_clip,
-                ).item()
+                if grad_clip is not None:
+                    grad_norm = self.precision.clip_gradient(
+                        optimizer,
+                        self.model.parameters(),
+                        grad_clip,
+                    ).item()
+                else:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        max_norm=float("inf")
+                    ).item()                
 
                 grad_norm_sum += grad_norm
 
