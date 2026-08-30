@@ -1,1166 +1,600 @@
-Yes. At this point the **dataset/windowing/model stack is coherent enough to train SimCLR**, but the trainer has a few integration bugs that will prevent the experiment from behaving correctly with your callback system.
+I’ve got the current training stack. Looking at these files together, I’d **fix a few things before running more SSL sweeps**. The overall architecture is good, but there are some correctness issues around checkpointing, validation, scheduler semantics, and experiment metrics.
 
-The biggest issues are:
+### 1. Most important: checkpoint callback state is saved too early
 
-1. **`CheckpointCallback` expects `trainer.optimizer` and `trainer.scheduler`**, but your trainer currently keeps them as local variables.
-2. **`CheckpointCallback` expects `trainer.best_val_acc`**, but that is never initialized.
-3. Your SSL validation currently has `apply_augmentation=True`, meaning validation views are still randomly augmented. For monitoring, we should make validation deterministic.
-4. Your `return` uses `val_acc`/`train_acc`, while the logs use `val_contrastive_acc`/`train_contrastive_acc`.
-5. `training_step()` is fine for validation, but we should explicitly make the validation path clear.
-6. Callback hooks for validation/batches aren't currently being used.
-7. We should restore RNG states when resuming; otherwise the checkpoint is not truly seamless.
-8. The scheduler and optimizer need to be attached to the trainer before callbacks can checkpoint them.
-
-I would fix the trainer now rather than changing the callbacks again.
-
-### Replace `src/training/ssl_simclr_train.py`
+In `CheckpointCallback.on_epoch_end()` you do:
 
 ```python
-# src/training/ssl_simclr_train.py
-
-import time
-from pathlib import Path
-from typing import Dict, Any, Optional, List
-
-import torch
-import torch.optim as optim
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-from sklearn.model_selection import train_test_split
-
-from src.data.datasets.ssl import (
-    SimCLRDataset,
-    simclr_collate_fn,
-)
-from src.models.ssl.simclr import SimCLR
-from src.models.encoders import CNNEncoder
-from src.models.heads import ProjectionHead
-
-from src.training.precision import PrecisionManager
-from src.training.scheduler import (
-    create_scheduler,
-    get_scheduler_step_frequency,
-)
-
-from src.utils.memory_utils import get_gpu_memory_info
-
-from src.training.callbacks import (
-    Callback,
-    CallbackRunner,
-    CheckpointCallback,
-    EarlyStoppingCallback,
-    JSONLoggerCallback,
-    CSVLoggerCallback,
-    WandBLoggerCallback,
-)
-
-
-class SimCLRExperimentTrainer:
-    """
-    Trainer for self-supervised contrastive learning with SimCLR.
-
-    Pipeline:
-
-        spectrogram
-            ↓
-        two independently augmented views
-            ↓
-        shared CNN encoder
-            ↓
-        projection head
-            ↓
-        normalized embeddings
-            ↓
-        NT-Xent / InfoNCE loss
-
-    The encoder can later be extracted using:
-
-        trainer.model.encode(x)
-
-    for downstream linear probing or fine-tuning.
-    """
-
-    def __init__(
-        self,
-        config: Dict[str, Any],
-        run_dir: Path,
-        callbacks: Optional[List[Callback]] = None,
-    ):
-        self.config = config
-        self.run_dir = Path(run_dir)
-        self.run_dir.mkdir(exist_ok=True, parents=True)
-
-        # -------------------------------------------------------------
-        # Device
-        # -------------------------------------------------------------
-
-        requested_device = config["training"].get("device", "cuda")
-
-        if requested_device == "cuda" and torch.cuda.is_available():
-            self.device = torch.device("cuda")
-        else:
-            self.device = torch.device("cpu")
-
-        # -------------------------------------------------------------
-        # Precision
-        # -------------------------------------------------------------
-
-        mixed_precision_cfg = config["training"].get(
-            "mixed_precision",
-            {},
-        )
-
-        self.precision = PrecisionManager(
-            enabled=mixed_precision_cfg.get("enabled", True),
-            device=self.device.type,
-            use_bfloat16=mixed_precision_cfg.get(
-                "use_bfloat16",
-                False,
-            ),
-        )
-
-        # -------------------------------------------------------------
-        # Trainer state
-        # -------------------------------------------------------------
-
-        self.model = None
-        self.optimizer = None
-        self.scheduler = None
-
-        self.best_loss = float("inf")
-        self.best_epoch = 0
-        self.best_val_acc = 0.0
-
-        self.stop_training = False
-
-        # -------------------------------------------------------------
-        # Callbacks
-        # -------------------------------------------------------------
-
-        if callbacks is None:
-            callbacks = [
-                CheckpointCallback(
-                    self.run_dir,
-                    monitor="val_loss",
-                    mode="min",
-                ),
-                EarlyStoppingCallback(
-                    monitor="val_loss",
-                    mode="min",
-                    patience=config["training"].get(
-                        "patience",
-                        15,
-                    ),
-                ),
-                JSONLoggerCallback(self.run_dir),
-                CSVLoggerCallback(self.run_dir),
-                WandBLoggerCallback(
-                    config,
-                    self.run_dir,
-                ),
-            ]
-
-        self.cb_runner = CallbackRunner(callbacks)
-
-    # =================================================================
-    # Control
-    # =================================================================
-
-    def request_stop(self):
-        """Request training to stop after the current epoch."""
-        self.stop_training = True
-
-    # =================================================================
-    # Data
-    # =================================================================
-
-    def get_dataloaders(self, df):
-        """
-        Build train and validation dataloaders.
-
-        SSL does not require labels.
-
-        Important:
-            The train/validation split is performed BEFORE temporal
-            windowing, so recordings do not get split into both sets.
-        """
-
-        batch_size = self.config["training"]["batch_size"]
-        num_workers = self.config["training"]["num_workers"]
-
-        segment_size = self.config["audio"]["segment_size"]
-
-        window_config = self.config.get(
-            "window",
-            {},
-        )
-
-        # -------------------------------------------------------------
-        # Recording-level split
-        # -------------------------------------------------------------
-
-        train_df, val_df = train_test_split(
-            df,
-            test_size=0.05,
-            random_state=42,
-            shuffle=True,
-        )
-
-        train_df = train_df.reset_index(drop=True)
-        val_df = val_df.reset_index(drop=True)
-
-        # -------------------------------------------------------------
-        # Training dataset
-        # -------------------------------------------------------------
-
-        train_dataset = SimCLRDataset(
-            df=train_df,
-            segment_size=segment_size,
-            min_db=self.config["audio"]["min_db"],
-            max_db=self.config["audio"]["max_db"],
-            train=True,
-
-            # SSL augmentation is controlled by apply_augmentation.
-            apply_augmentation=True,
-
-            window_config=window_config,
-
-            acoustic_aug_config=self.config.get(
-                "acoustic_augmentation",
-                {},
-            ),
-
-            spec_aug_config=self._get_augmentation_config(),
-        )
-
-        # -------------------------------------------------------------
-        # Validation dataset
-        # -------------------------------------------------------------
-
-        val_dataset = SimCLRDataset(
-            df=val_df,
-            segment_size=segment_size,
-            min_db=self.config["audio"]["min_db"],
-            max_db=self.config["audio"]["max_db"],
-            train=False,
-
-            # IMPORTANT:
-            # Validation should not receive stochastic augmentations.
-            apply_augmentation=False,
-
-            # Evaluate every deterministic window.
-            window_config={
-                "strategy": "sliding",
-                "stride": segment_size,
-            },
-
-            acoustic_aug_config=self.config.get(
-                "acoustic_augmentation",
-                {},
-            ),
-
-            spec_aug_config=self._get_augmentation_config(),
-        )
-
-        # -------------------------------------------------------------
-        # DataLoaders
-        # -------------------------------------------------------------
-
-        loader_kwargs = {
-            "batch_size": batch_size,
-            "num_workers": num_workers,
-            "pin_memory": self.device.type == "cuda",
-            "persistent_workers": num_workers > 0,
-            "collate_fn": simclr_collate_fn,
-        }
-
-        train_loader = DataLoader(
-            train_dataset,
-            shuffle=True,
-            **loader_kwargs,
-        )
-
-        val_loader = DataLoader(
-            val_dataset,
-            shuffle=False,
-            **loader_kwargs,
-        )
-
-        return train_loader, val_loader
-
-    # =================================================================
-    # Augmentation
-    # =================================================================
-
-    def _get_augmentation_config(self):
-        """
-        Extract spectrogram augmentation configuration.
-        """
-
-        aug_cfg = self.config.get(
-            "augmentation",
-            {},
-        )
-
-        return {
-            "enabled": aug_cfg.get(
-                "enabled",
-                True,
-            ),
-            "prob": aug_cfg.get(
-                "prob",
-                0.5,
-            ),
-            "num_freq_masks": aug_cfg.get(
-                "num_freq_masks",
-                2,
-            ),
-            "freq_mask_param": aug_cfg.get(
-                "freq_mask_param",
-                6,
-            ),
-            "num_time_masks": aug_cfg.get(
-                "num_time_masks",
-                2,
-            ),
-            "time_mask_param": aug_cfg.get(
-                "time_mask_param",
-                10,
-            ),
-        }
-
-    # =================================================================
-    # Model
-    # =================================================================
-
-    def _build_model(self):
-        """
-        Build CNN encoder + projection head + SimCLR.
-        """
-
-        encoder_cfg = self.config["model"]
-        projection_cfg = self.config.get(
-            "projection",
-            {},
-        )
-
-        encoder = CNNEncoder(
-            n_mels=self.config["audio"]["n_mels"],
-            embed_dim=encoder_cfg.get(
-                "embed_dim",
-                512,
-            ),
-            base_channels=encoder_cfg.get(
-                "base_channels",
-                64,
-            ),
-            dropout=encoder_cfg.get(
-                "dropout",
-                0.1,
-            ),
-        )
-
-        projection = ProjectionHead(
-            input_dim=encoder.get_output_dim(),
-            hidden_dim=projection_cfg.get(
-                "hidden_dim",
-                256,
-            ),
-            output_dim=projection_cfg.get(
-                "output_dim",
-                128,
-            ),
-        )
-
-        model = SimCLR(
-            encoder=encoder,
-            projection=projection,
-            temperature=self.config.get(
-                "temperature",
-                0.07,
-            ),
-        )
-
-        return model.to(self.device)
-
-    # =================================================================
-    # Checkpoint resume
-    # =================================================================
-
-    def _resume_from_checkpoint(
-        self,
-        checkpoint_path: Path,
-    ) -> int:
-        """
-        Restore model, optimizer, scheduler, precision,
-        callbacks and RNG state.
-
-        Returns:
-            Epoch from which training should continue.
-        """
-
-        print(
-            f"    ↻ Resuming from "
-            f"{checkpoint_path.name}"
-        )
-
-        checkpoint = torch.load(
-            checkpoint_path,
-            map_location=self.device,
-            weights_only=False,
-        )
-
-        self.model.load_state_dict(
-            checkpoint["model_state_dict"]
-        )
-
-        self.optimizer.load_state_dict(
-            checkpoint["optimizer_state_dict"]
-        )
-
-        if (
-            self.scheduler is not None
-            and checkpoint.get("scheduler_state_dict") is not None
-        ):
-            self.scheduler.load_state_dict(
-                checkpoint["scheduler_state_dict"]
-            )
-
-        if checkpoint.get("precision_state_dict"):
-            self.precision.load_state_dict(
-                checkpoint["precision_state_dict"]
-            )
-
-        if checkpoint.get("callbacks_state_dict"):
-            self.cb_runner.load_state_dict(
-                checkpoint["callbacks_state_dict"]
-            )
-
-        # -------------------------------------------------------------
-        # Restore RNG state
-        # -------------------------------------------------------------
-
-        if checkpoint.get("torch_rng_state") is not None:
-            torch.set_rng_state(
-                checkpoint["torch_rng_state"]
-            )
-
-        if (
-            torch.cuda.is_available()
-            and checkpoint.get("cuda_rng_state") is not None
-        ):
-            torch.cuda.set_rng_state_all(
-                checkpoint["cuda_rng_state"]
-            )
-
-        resume_epoch = checkpoint.get(
-            "epoch",
-            0,
-        )
-
-        print(
-            f"    ↻ Continuing from epoch "
-            f"{resume_epoch + 1}"
-        )
-
-        return resume_epoch
-
-    # =================================================================
-    # Training
-    # =================================================================
-
-    def train(self, df):
-        """
-        Run complete SimCLR training experiment.
-        """
-
-        # -------------------------------------------------------------
-        # Data
-        # -------------------------------------------------------------
-
-        train_loader, val_loader = self.get_dataloaders(df)
-
-        # -------------------------------------------------------------
-        # Model
-        # -------------------------------------------------------------
-
-        self.model = self._build_model()
-
-        # -------------------------------------------------------------
-        # Parameter count
-        # -------------------------------------------------------------
-
-        num_params = sum(
-            p.numel()
-            for p in self.model.parameters()
-            if p.requires_grad
-        )
-
-        print("\n>>> Initializing SimCLR Training:")
-        print(f"    Device: {self.device}")
-        print(
-            f"    Precision: "
-            f"{self.precision.precision_name()}"
-        )
-        print(
-            f"    Trainable params: "
-            f"{num_params:,}"
-        )
-        print(
-            f"    Train windows: "
-            f"{len(train_loader.dataset):,}"
-        )
-        print(
-            f"    Val windows: "
-            f"{len(val_loader.dataset):,}"
-        )
-
-        # -------------------------------------------------------------
-        # Optimizer
-        # -------------------------------------------------------------
-
-        self.optimizer = optim.AdamW(
-            self.model.parameters(),
-            lr=self.config["training"]["learning_rate"],
-            weight_decay=self.config["training"].get(
-                "weight_decay",
-                1e-4,
-            ),
-        )
-
-        # -------------------------------------------------------------
-        # Scheduler
-        # -------------------------------------------------------------
-
-        epochs = self.config["training"]["epochs"]
-
-        scheduler_type = self.config["training"].get(
-            "scheduler_type",
-            "cosine",
-        )
-
-        warmup_steps = self.config["training"].get(
-            "warmup_steps",
-            0,
-        )
-
-        total_steps = len(train_loader) * epochs
-
-        self.scheduler = create_scheduler(
-            optimizer=self.optimizer,
-            scheduler_type=scheduler_type,
-            warmup_steps=warmup_steps,
-            total_steps=total_steps,
-            min_lr=self.config["training"].get(
-                "min_lr",
-                1e-6,
-            ),
-        )
-
-        step_frequency = get_scheduler_step_frequency(
-            scheduler_type
-        )
-
-        # -------------------------------------------------------------
-        # Resume
-        # -------------------------------------------------------------
-
-        resume_epoch = 0
-
-        checkpoint_path = (
-            self.run_dir /
-            "checkpoint_last.pth"
-        )
-
-        if checkpoint_path.exists():
-            resume_epoch = self._resume_from_checkpoint(
-                checkpoint_path
-            )
-
-        # -------------------------------------------------------------
-        # Training start
-        # -------------------------------------------------------------
-
-        self.cb_runner.on_train_begin(self)
-
-        # Protect against empty datasets.
-        if len(train_loader.dataset) == 0:
-            raise ValueError(
-                "Training dataset contains zero windows."
-            )
-
-        if len(val_loader.dataset) == 0:
-            raise ValueError(
-                "Validation dataset contains zero windows."
-            )
-
-        # -------------------------------------------------------------
-        # Epoch loop
-        # -------------------------------------------------------------
-
-        for epoch in range(
-            resume_epoch,
-            epochs,
-        ):
-
-            if self.stop_training:
-                break
-
-            # ---------------------------------------------------------
-            # Update temporal window sampling
-            # ---------------------------------------------------------
-
-            train_loader.dataset.set_epoch(epoch)
-
-            self.cb_runner.on_epoch_begin(
-                self,
-                epoch,
-            )
-
-            epoch_start = time.time()
-
-            # =========================================================
-            # TRAIN
-            # =========================================================
-
-            self.model.train()
-
-            train_loss_total = 0.0
-            train_acc_total = 0.0
-            train_samples = 0
-            grad_norm_total = 0.0
-            num_batches = 0
-
-            train_pbar = tqdm(
-                train_loader,
-                desc=(
-                    f"Epoch {epoch + 1}/{epochs} "
-                    "[Train]"
-                ),
-                leave=False,
-            )
-
-            for batch_idx, (x1, x2) in enumerate(
-                train_pbar
-            ):
-
-                self.cb_runner.on_batch_begin(
-                    self,
-                    batch_idx,
-                    {},
-                )
-
-                x1 = x1.to(
-                    self.device,
-                    non_blocking=True,
-                )
-
-                x2 = x2.to(
-                    self.device,
-                    non_blocking=True,
-                )
-
-                self.optimizer.zero_grad(
-                    set_to_none=True
-                )
-
-                # -----------------------------------------------------
-                # Forward + contrastive loss
-                # -----------------------------------------------------
-
-                with self.precision.autocast():
-
-                    loss, acc = (
-                        self.model.training_step(
-                            x1,
-                            x2,
-                        )
-                    )
-
-                # -----------------------------------------------------
-                # Backward
-                # -----------------------------------------------------
-
-                self.precision.scale_loss(
-                    loss
-                ).backward()
-
-                self.precision.unscale_gradients(
-                    self.optimizer
-                )
-
-                # -----------------------------------------------------
-                # Gradient clipping
-                # -----------------------------------------------------
-
-                grad_clip = self.config["training"].get(
-                    "gradient_clip"
-                )
-
-                grad_norm = (
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(),
-                        max_norm=(
-                            grad_clip
-                            if grad_clip is not None
-                            else float("inf")
-                        ),
-                    ).item()
-                )
-
-                # -----------------------------------------------------
-                # Optimizer
-                # -----------------------------------------------------
-
-                self.precision.step(
-                    self.optimizer
-                )
-
-                self.precision.update()
-
-                # -----------------------------------------------------
-                # Scheduler
-                # -----------------------------------------------------
-
-                if (
-                    self.scheduler is not None
-                    and step_frequency == "batch"
-                ):
-                    self.scheduler.step()
-
-                # -----------------------------------------------------
-                # Metrics
-                # -----------------------------------------------------
-
-                batch_size = x1.size(0)
-
-                train_loss_total += (
-                    loss.item() * batch_size
-                )
-
-                train_acc_total += (
-                    acc.item() * batch_size
-                )
-
-                train_samples += batch_size
-
-                grad_norm_total += grad_norm
-                num_batches += 1
-
-                batch_logs = {
-                    "loss": loss.item(),
-                    "contrastive_acc": acc.item(),
-                    "grad_norm": grad_norm,
-                }
-
-                self.cb_runner.on_batch_end(
-                    self,
-                    batch_idx,
-                    batch_logs,
-                )
-
-                train_pbar.set_postfix(
-                    loss=f"{loss.item():.4f}",
-                    acc=f"{acc.item():.4f}",
-                )
-
-            # ---------------------------------------------------------
-            # Train averages
-            # ---------------------------------------------------------
-
-            avg_train_loss = (
-                train_loss_total /
-                train_samples
-            )
-
-            avg_train_acc = (
-                train_acc_total /
-                train_samples
-            )
-
-            # =========================================================
-            # VALIDATION
-            # =========================================================
-
-            self.cb_runner.on_validation_begin(
-                self
-            )
-
-            self.model.eval()
-
-            val_loss_total = 0.0
-            val_acc_total = 0.0
-            val_samples = 0
-
-            val_pbar = tqdm(
-                val_loader,
-                desc=(
-                    f"Epoch {epoch + 1}/{epochs} "
-                    "[Val]"
-                ),
-                leave=False,
-            )
-
-            with torch.no_grad():
-
-                for x1, x2 in val_pbar:
-
-                    x1 = x1.to(
-                        self.device,
-                        non_blocking=True,
-                    )
-
-                    x2 = x2.to(
-                        self.device,
-                        non_blocking=True,
-                    )
-
-                    with self.precision.autocast():
-
-                        loss, acc = (
-                            self.model.training_step(
-                                x1,
-                                x2,
-                            )
-                        )
-
-                    batch_size = x1.size(0)
-
-                    val_loss_total += (
-                        loss.item() * batch_size
-                    )
-
-                    val_acc_total += (
-                        acc.item() * batch_size
-                    )
-
-                    val_samples += batch_size
-
-                    val_pbar.set_postfix(
-                        loss=f"{loss.item():.4f}",
-                        acc=f"{acc.item():.4f}",
-                    )
-
-            # ---------------------------------------------------------
-            # Validation averages
-            # ---------------------------------------------------------
-
-            avg_val_loss = (
-                val_loss_total /
-                val_samples
-            )
-
-            avg_val_acc = (
-                val_acc_total /
-                val_samples
-            )
-
-            validation_logs = {
-                "val_loss": avg_val_loss,
-                "val_contrastive_acc": avg_val_acc,
-            }
-
-            self.cb_runner.on_validation_end(
-                self,
-                validation_logs,
-            )
-
-            # ---------------------------------------------------------
-            # Epoch scheduler
-            # ---------------------------------------------------------
-
-            if (
-                self.scheduler is not None
-                and step_frequency == "epoch"
-            ):
-                self.scheduler.step(
-                    avg_val_loss
-                )
-
-            # =========================================================
-            # LOGGING
-            # =========================================================
-
-            epoch_duration = (
-                time.time() -
-                epoch_start
-            )
-
-            current_lr = (
-                self.optimizer.param_groups[0]["lr"]
-            )
-
-            logs = {
-                "epoch": epoch + 1,
-
-                "train_loss": avg_train_loss,
-                "train_contrastive_acc": avg_train_acc,
-
-                "val_loss": avg_val_loss,
-                "val_contrastive_acc": avg_val_acc,
-
-                "learning_rate": current_lr,
-
-                "grad_norm": (
-                    grad_norm_total /
-                    num_batches
-                    if num_batches > 0
-                    else 0.0
-                ),
-
-                "epoch_time_sec": epoch_duration,
-            }
-
-            logs.update(
-                get_gpu_memory_info(
-                    self.device
-                )
-            )
-
-            # Keep trainer-level best metrics available
-            # to callbacks.
-            if avg_val_loss < self.best_loss:
-                self.best_loss = avg_val_loss
-                self.best_epoch = epoch + 1
-
-            if avg_val_acc > self.best_val_acc:
-                self.best_val_acc = avg_val_acc
-
-            # ---------------------------------------------------------
-            # Console output
-            # ---------------------------------------------------------
-
-            print(
-                f"Epoch {epoch + 1}/{epochs} | "
-                f"{epoch_duration:.1f}s | "
-                f"Train Loss: "
-                f"{avg_train_loss:.4f} | "
-                f"Train Contrastive Acc: "
-                f"{avg_train_acc:.4f} | "
-                f"Val Loss: "
-                f"{avg_val_loss:.4f} | "
-                f"Val Contrastive Acc: "
-                f"{avg_val_acc:.4f} | "
-                f"LR: "
-                f"{current_lr:.2e}"
-            )
-
-            # ---------------------------------------------------------
-            # Callbacks
-            # ---------------------------------------------------------
-
-            self.cb_runner.on_epoch_end(
-                self,
-                epoch,
-                logs,
-            )
-
-        # =============================================================
-        # END
-        # =============================================================
-
-        self.cb_runner.on_train_end(
-            self
-        )
-
-        print(
-            "\n>>> SimCLR training complete."
-        )
-
-        print(
-            f"    Best validation loss: "
-            f"{self.best_loss:.6f}"
-        )
-
-        print(
-            f"    Best epoch: "
-            f"{self.best_epoch}"
-        )
-
-        print(
-            f"    Best contrastive accuracy: "
-            f"{self.best_val_acc:.4f}"
-        )
-
-        # -------------------------------------------------------------
-        # Experiment runner-compatible return
-        # -------------------------------------------------------------
-
-        return {
-            "val_loss": avg_val_loss,
-            "val_acc": avg_val_acc,
-            "train_loss": avg_train_loss,
-            "train_acc": avg_train_acc,
-        }
+checkpoint = {
+    ...
+    "callbacks_state_dict": trainer.cb_runner.state_dict(),
+}
 ```
 
-### One important point before running
-
-There is a **second issue in your current callback implementation** that I would fix before launching a long experiment.
-
-`CheckpointCallback` currently saves:
+But `CheckpointCallback.state_dict()` still contains the **previous** `best_score`. You only update:
 
 ```python
-"val_acc": logs.get("val_acc", 0.0),
+self.best_score = current_score
 ```
 
-but SimCLR produces:
+after the checkpoint dictionary has already been created.
+
+So suppose:
+
+```text
+Epoch 10: val_loss = 1.20  -> best
+Epoch 11: val_loss = 1.10  -> new best
+```
+
+The `checkpoint_best.pth` from epoch 11 can contain the callback state saying the best was still `1.20`.
+
+That matters when resuming because:
+
+```python
+self.cb_runner.load_state_dict(...)
+```
+
+restores the stale value.
+
+### Fix
+
+Update the callback's state **before constructing the checkpoint**, or explicitly build the checkpoint after determining `improved`.
+
+I'd restructure `on_epoch_end()` roughly as:
+
+```python
+def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
+    current_score = logs.get(self.monitor)
+
+    improved = (
+        current_score > self.best_score
+        if self.mode == "max"
+        else current_score < self.best_score
+    )
+
+    if improved:
+        self.best_score = current_score
+
+    checkpoint = {
+        "epoch": epoch + 1,
+        "logs": logs,
+        "model_state_dict": trainer.model.state_dict(),
+        "optimizer_state_dict": trainer.optimizer.state_dict(),
+        "scheduler_state_dict": (
+            trainer.scheduler.state_dict()
+            if trainer.scheduler else None
+        ),
+        "precision_state_dict": trainer.precision.state_dict(),
+        "callbacks_state_dict": trainer.cb_runner.state_dict(),
+        "torch_rng_state": torch.get_rng_state(),
+        "cuda_rng_state": (
+            torch.cuda.get_rng_state_all()
+            if torch.cuda.is_available()
+            else None
+        ),
+        "git_commit": getattr(trainer, "git_hash", None),
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda
+            if torch.cuda.is_available()
+            else None,
+    }
+
+    torch.save(
+        checkpoint,
+        self.run_dir / "checkpoint_last.pth"
+    )
+
+    torch.save(
+        trainer.model.state_dict(),
+        self.run_dir / "last_model.pth"
+    )
+
+    if improved:
+        torch.save(
+            checkpoint,
+            self.run_dir / "checkpoint_best.pth"
+        )
+
+        torch.save(
+            trainer.model.state_dict(),
+            self.run_dir / "best_model.pth"
+        )
+
+        print(
+            f"    ✓ Saved new best model "
+            f"({self.monitor}: {current_score:.4f})"
+        )
+```
+
+That's the first thing I'd fix.
+
+---
+
+## 2. Your SSL validation is currently augmented
+
+This is suspicious:
+
+```python
+val_dataset = SimCLRDataset(
+    ...
+    train=False,
+    apply_augmentation=True,
+    ...
+)
+```
+
+For a validation set, I'd normally expect:
+
+```python
+apply_augmentation=False
+```
+
+unless your `SimCLRDataset` explicitly interprets `train=False` as deterministic/non-training views regardless of that flag.
+
+You should inspect that class because this can make your validation metric noisy or conceptually misleading.
+
+For SSL, you want:
+
+```text
+TRAIN
+recording
+   ↓
+window
+   ↓
+augmentation A ──→ x1
+augmentation B ──→ x2
+   ↓
+SimCLR loss
+
+
+VALIDATION
+recording
+   ↓
+window
+   ↓
+controlled/deterministic views
+   ↓
+contrastive validation loss
+```
+
+not:
+
+```text
+VALIDATION
+recording
+   ↓
+random augmentation
+   ↓
+random augmentation
+   ↓
+metric
+```
+
+---
+
+## 3. `val_acc` naming is misleading for the experiment runner
+
+Your SimCLR trainer returns:
+
+```python
+return {
+    "val_loss": avg_val_loss,
+    "val_acc": avg_val_acc,
+    "train_loss": avg_train_loss,
+    "train_acc": avg_train_acc,
+}
+```
+
+But internally your logs call it:
 
 ```python
 "val_contrastive_acc"
 ```
 
-So your checkpoint will contain:
-
-```text
-val_acc = 0.0
-```
-
-even though the actual contrastive accuracy is being calculated.
-
-That's not fatal because we're monitoring `val_loss`, but it's misleading and will become a problem when you inspect experiments.
-
-I'd change this part of `CheckpointCallback`:
+and:
 
 ```python
-checkpoint = {
-    "epoch": epoch + 1,
-    "val_acc": logs.get(
-        "val_contrastive_acc",
-        logs.get("val_acc", 0.0),
-    ),
-    "val_loss": logs.get(
-        "val_loss",
-        float("inf"),
-    ),
+"train_contrastive_acc"
+```
 
-    "model_state_dict": trainer.model.state_dict(),
-    "optimizer_state_dict": trainer.optimizer.state_dict(),
+These are not ordinary classification accuracies.
 
-    "scheduler_state_dict": (
-        trainer.scheduler.state_dict()
-        if trainer.scheduler
-        else None
-    ),
+So this:
 
-    "precision_state_dict": (
-        trainer.precision.state_dict()
-    ),
+```python
+success_msg = (
+    f"      ✓ Val Loss: {metrics.get('val_loss', 0):.4f} | "
+    f"Val Acc: {metrics.get('val_acc', 0):.4f}"
+)
+```
 
-    "callbacks_state_dict": (
-        trainer.cb_runner.state_dict()
-    ),
+makes it look like SSL produced bird-classification accuracy.
 
-    "torch_rng_state": torch.get_rng_state(),
+I'd rename the returned values:
 
-    "cuda_rng_state": (
-        torch.cuda.get_rng_state_all()
-        if torch.cuda.is_available()
-        else None
-    ),
-
-    "git_commit": getattr(
-        trainer,
-        "git_hash",
-        None,
-    ),
-
-    "torch_version": torch.__version__,
-
-    "cuda_version": (
-        torch.version.cuda
-        if torch.cuda.is_available()
-        else None
-    ),
+```python
+return {
+    "val_loss": avg_val_loss,
+    "val_contrastive_acc": avg_val_acc,
+    "train_loss": avg_train_loss,
+    "train_contrastive_acc": avg_train_acc,
 }
 ```
 
-And if you want the callback's `best_val_acc` to represent SimCLR's contrastive accuracy, change:
+and update `experiment_runner.py` accordingly.
 
-```python
-trainer.best_val_acc = logs.get("val_acc", 0.0)
+Even better, eventually the SSL experiment should report something like:
+
+```text
+contrastive_loss
+contrastive_accuracy
+linear_probe_accuracy
+linear_probe_macro_f1
 ```
 
-to:
+because **the actual goal of SimCLR is representation learning**, not maximizing contrastive classification accuracy.
+
+---
+
+## 4. The SSL experiment summary currently ranks by loss
+
+You have:
 
 ```python
-trainer.best_val_acc = logs.get(
-    "val_contrastive_acc",
-    logs.get("val_acc", 0.0),
+df_results_sorted = df_results.sort_values(
+    "val_loss",
+    ascending=True
 )
+```
+
+That's defensible, but be careful about interpreting it.
+
+A lower contrastive validation loss does **not necessarily mean a better bird classifier**.
+
+For the Bird-Intelligence-System research pipeline, I'd eventually make the experiment hierarchy:
+
+```text
+                    SSL pretraining
+                         │
+                         ▼
+                  frozen encoder
+                         │
+                         ▼
+                    linear probe
+                         │
+              ┌──────────┴──────────┐
+              ▼                     ▼
+          accuracy              macro F1
+```
+
+Then your SSL sweep can answer:
+
+> Which pretraining configuration produces the best representation?
+
+rather than:
+
+> Which configuration produces the lowest contrastive loss?
+
+That's a much stronger experimental design.
+
+---
+
+## 5. Scheduler logic is mostly good, but there's an important conceptual issue
+
+You calculate:
+
+```python
+total_steps = len(train_loader) * epochs
+```
+
+and:
+
+```python
+step_frequency = get_scheduler_step_frequency(scheduler_type)
+```
+
+with:
+
+```python
+return "batch"
+```
+
+for almost everything except `ReduceLROnPlateau`.
+
+That's correct for:
+
+* cosine
+* linear decay
+* OneCycleLR
+* warmup
+* cosine warm restarts
+
+**provided that the scheduler is intended to operate per optimizer step.**
+
+Your current scheduler architecture is therefore consistent with the training loop:
+
+```text
+batch
+ ├── forward
+ ├── backward
+ ├── optimizer.step()
+ └── scheduler.step()
+```
+
+Good.
+
+But `ReduceLROnPlateau` is correctly different:
+
+```text
+epoch
+ ├── training
+ ├── validation
+ └── scheduler.step(val_loss)
+```
+
+Also good.
+
+---
+
+## 6. One scheduler edge case I'd fix
+
+This:
+
+```python
+if scheduler_type == "constant" and warmup_steps == 0:
+    return None
+```
+
+is fine.
+
+But:
+
+```python
+if warmup_steps > 0:
+    warmup_scheduler = LinearLR(...)
+```
+
+doesn't validate:
+
+```python
+warmup_start_factor
+```
+
+You could accidentally configure:
+
+```yaml
+warmup_start_factor: 0
+```
+
+or even:
+
+```yaml
+warmup_start_factor: 1.5
+```
+
+The latter is not really "warmup".
+
+I'd validate:
+
+```python
+if not 0.0 < warmup_start_factor <= 1.0:
+    raise ValueError(
+        "warmup_start_factor must be in (0, 1]."
+    )
 ```
 
 ---
 
-## One architectural decision we should keep straight
+## 7. `PrecisionManager` has a misleading MPS path
 
-Your current SSL pipeline is now:
+You accept:
 
-```text
-Bird recording
-      │
-      ▼
-precomputed mel spectrogram
-      │
-      ▼
-WindowIndex
-      │
-      ├───────────────┐
-      ▼               ▼
-   same window     same window
-      │               │
-      ▼               ▼
- acoustic/spec     acoustic/spec
- augmentation      augmentation
-      │               │
-      ▼               ▼
-     x₁              x₂
-      │               │
-      └───────┬───────┘
-              ▼
-        shared CNNEncoder
-              │
-              ▼
-        h₁          h₂
-         │            │
-         ▼            ▼
-    Projection     Projection
-         │            │
-         ▼            ▼
-        z₁            z₂
-         │            │
-         └─────┬──────┘
-               ▼
-            NT-Xent
-               │
-               ▼
-             loss
+```python
+device: "cuda", "cpu", or "mps"
 ```
 
-And importantly, because your `SlidingWindowStrategy` exposes **one window per recording per epoch**, your SSL training dataset does **not explode in size** as the supervised validation dataset does. Epoch 0 sees one window per recording, epoch 1 sees the next window, etc.
+but:
 
-That is actually a very reasonable starting design for this project.
-
-### Before the first real run
-
-I would do a **tiny smoke test** rather than immediately launching 100–500 epochs:
-
-```text
-10–20 recordings
-        ↓
-batch size 4 or 8
-        ↓
-2–3 epochs
-        ↓
-verify:
-    shapes
-    loss decreases
-    gradients exist
-    checkpoints save
-    resume works
-    validation works
+```python
+self.enabled = (
+    enabled
+    and device == "cuda"
+    and torch.cuda.is_available()
+)
 ```
 
-Then we can launch the real SimCLR experiment.
+and the trainer does:
 
-One thing I would **not** change yet is the CNN architecture. We now have enough of the pipeline wired together to get an actual baseline result first.
+```python
+self.device = torch.device(
+    config["training"].get("device", "cuda")
+    if torch.cuda.is_available()
+    else "cpu"
+)
+```
+
+So if the config says:
+
+```yaml
+device: mps
+```
+
+on a Mac without CUDA, you force:
+
+```text
+mps → cpu
+```
+
+The precision manager's documentation therefore claims more support than the implementation provides.
+
+For your current GPU research setup this isn't urgent, but the API should eventually either:
+
+1. explicitly support MPS, or
+2. document that only CUDA/CPU are supported.
+
+---
+
+## 8. You have redundant gradient unscaling
+
+In SSL:
+
+```python
+self.precision.scale_loss(loss).backward()
+self.precision.unscale_gradients(optimizer)
+
+grad_norm = torch.nn.utils.clip_grad_norm_(
+    ...
+)
+```
+
+This is actually correct.
+
+But you also have:
+
+```python
+PrecisionManager.clip_gradients()
+```
+
+which does the same thing.
+
+So the trainer should use the abstraction you already created:
+
+```python
+self.precision.clip_gradients(
+    optimizer,
+    self.model.parameters(),
+    grad_clip,
+)
+```
+
+If you want the gradient norm for logging, then the manager should return it:
+
+```python
+grad_norm = self.precision.clip_gradients(...)
+```
+
+That would keep the training loop ignorant of AMP implementation details, which is exactly what your `PrecisionManager` claims to achieve.
+
+---
+
+## 9. `WandBLoggerCallback` regressed to a hard dependency
+
+Your earlier version had:
+
+```python
+try:
+    import wandb
+except ImportError:
+    wandb = None
+```
+
+The current version has:
+
+```python
+import wandb
+```
+
+but then:
+
+```python
+self.enabled = (
+    config.get("logging", {}).get("use_wandb", False)
+    and wandb is not None
+)
+```
+
+The `wandb is not None` check is now useless because importing the module itself will fail if WandB isn't installed.
+
+I'd restore the optional import:
+
+```python
+try:
+    import wandb
+except ImportError:
+    wandb = None
+```
+
+That makes:
+
+```yaml
+use_wandb: false
+```
+
+actually mean "I don't need WandB installed."
+
+---
+
+# 10. The biggest architectural issue: SSL "validation" isn't really evaluation
+
+This is the thing I'd address after the correctness fixes.
+
+Currently:
+
+```text
+df
+ │
+ ├── 95% train
+ │
+ └── 5% validation
+       │
+       └── contrastive loss
+```
+
+Then your experiment runner says:
+
+```text
+Val Loss
+Val Acc
+```
+
+That's okay as a **training diagnostic**.
+
+But for the research question we're pursuing with your BirdCLEF/Bird-Intelligence-System work, the important evaluation is:
+
+```text
+                Unlabelled audio
+                       │
+                       ▼
+                 SimCLR encoder
+                       │
+                       ▼
+                pretrained encoder
+                       │
+          ┌────────────┴────────────┐
+          │                         │
+          ▼                         ▼
+    linear evaluation          fine-tuning
+          │                         │
+          ▼                         ▼
+     bird accuracy             bird accuracy
+     macro F1                  macro F1
+```
+
+That gives you an actual answer to:
+
+> Does self-supervised pretraining improve bird-species representations?
+
+rather than merely:
+
+> Did SimCLR minimize its own objective?
+
+---
+
+# What I'd fix now
+
+I'd make the next bug-fixing pass in this order:
+
+| Priority | Issue                                     | Action                             |
+| -------- | ----------------------------------------- | ---------------------------------- |
+| 🔴 1     | Checkpoint callback state stale           | Fix                                |
+| 🔴 2     | SSL validation augmentation               | Inspect/fix                        |
+| 🔴 3     | `val_acc` misleading                      | Rename to contrastive metric       |
+| 🟠 4     | WandB hard dependency                     | Restore optional import            |
+| 🟠 5     | Precision abstraction bypassed            | Return/use gradient norm           |
+| 🟡 6     | Warmup parameter validation               | Add validation                     |
+| 🟡 7     | MPS documentation/implementation mismatch | Clean up                           |
+| 🟢 8     | SSL evaluation design                     | Add linear probe after pretraining |
+
+The **scheduler itself is not the main problem** here. Its batch/epoch stepping design is broadly correct.
+
+The more important issue for your current experiments is that **the SSL pipeline can currently produce a perfectly valid-looking `val_loss`/`val_contrastive_acc` result without telling us whether the learned encoder is actually useful for bird classification**. That should be the next major architectural step after we make checkpoint/resume behavior airtight.
