@@ -330,7 +330,7 @@ class SimCLRExperimentTrainer:
         # Return minimal metrics for the experiment CSV
         return {
             "val_loss": avg_val_loss,
-            "val_acc": avg_val_acc,
-            "train_loss": avg_train_loss,
-            "train_acc": avg_train_acc,
+            "val_contrastive_acc": avg_val_acc,
+            "train_loss": avg_train_loss,                
+            "train_contrastive_acc": avg_train_acc,
         }
