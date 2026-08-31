@@ -18,7 +18,10 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import torch
 import wandb
-
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 class Callback:
     """Base class for all training callbacks."""
