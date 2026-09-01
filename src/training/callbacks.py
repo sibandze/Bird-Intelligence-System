@@ -17,6 +17,9 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional
 import torch
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend
+import matplotlib.pyplot as plt
 import wandb
 try:
     import wandb
@@ -336,3 +339,88 @@ class WandBLoggerCallback(Callback):
             if path.exists():
                 wandb.save(str(path), base_path=str(self.run_dir))
         wandb.finish()
+
+
+# =====================================================================
+# 4. Plot Metrics Callback
+# =====================================================================
+class PlotMetricsCallback(Callback):
+    """
+    Plots training metrics across epochs (e.g., loss, accuracy).
+
+    - Saves plots after each epoch (overwrites same file).
+    - Automatically selects numeric metrics from logs.
+    - Supports both supervised (train_acc, val_acc) and SSL
+      (train_contrastive_acc, val_contrastive_acc).
+    """
+
+    def __init__(
+        self,
+        run_dir: Path,
+        metrics: Optional[List[str]] = None,
+        figsize: tuple = (12, 5),
+    ):
+        self.run_dir = Path(run_dir)
+        self.history: List[Dict[str, Any]] = []
+        self.metrics = metrics  # if None, auto-detect
+        self.figsize = figsize
+
+    def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
+        self.history.append(logs.copy())
+        self._plot()
+
+    def on_train_end(self, trainer):
+        # Final plot to ensure it's up‑to‑date
+        self._plot()
+
+    def _plot(self):
+        if not self.history:
+            return
+
+        # Determine metrics to plot
+        if self.metrics is None:
+            # Auto-detect: all keys that are numeric and change across epochs
+            # Here we simply plot all keys that are int/float and are not metadata
+            excluded = {"epoch", "learning_rate", "grad_norm", "epoch_time_sec",
+                        "samples_per_sec", "loss_scale", "precision"}
+            metrics = [k for k in self.history[0].keys()
+                       if k not in excluded and isinstance(self.history[0][k], (int, float))]
+        else:
+            metrics = self.metrics
+
+        if not metrics:
+            return
+
+        # Create figure with subplots for each metric
+        num_metrics = len(metrics)
+        fig, axes = plt.subplots(1, num_metrics, figsize=(self.figsize[0] * num_metrics, self.figsize[1]))
+        if num_metrics == 1:
+            axes = [axes]
+
+        epochs = [h.get("epoch", i+1) for i, h in enumerate(self.history)]
+
+        for ax, metric in zip(axes, metrics):
+            values = [h.get(metric) for h in self.history]
+            # Remove None values
+            clean_epochs = [e for e, v in zip(epochs, values) if v is not None]
+            clean_values = [v for v in values if v is not None]
+            if not clean_values:
+                continue
+            ax.plot(clean_epochs, clean_values, marker='o', linestyle='-', linewidth=2, markersize=4)
+            ax.set_title(metric)
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel(metric)
+            ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plot_path = self.run_dir / "training_plots.png"
+        plt.savefig(plot_path, dpi=100, bbox_inches="tight")
+        plt.close(fig)
+
+    def state_dict(self) -> Dict[str, Any]:
+        return {"history": self.history}
+
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        self.history = state_dict.get("history", [])
+        # Re‑plot if history was loaded (for resume)
+        self._plot()
