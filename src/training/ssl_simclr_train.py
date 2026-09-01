@@ -188,7 +188,7 @@ class SimCLRExperimentTrainer:
         print(f"    Train samples: {len(train_loader.dataset)}")
         print(f"    Val samples: {len(val_loader.dataset)}")
 
-        optimizer = optim.AdamW(
+        self.optimizer = optim.AdamW(
             self.model.parameters(),
             lr=self.config["training"]["learning_rate"],
             weight_decay=self.config["training"].get("weight_decay", 1e-4),
@@ -197,8 +197,8 @@ class SimCLRExperimentTrainer:
         scheduler_type = self.config["training"].get("scheduler_type", "cosine")
         warmup_steps = self.config["training"].get("warmup_steps", 0)
         total_steps = len(train_loader) * epochs
-        scheduler = create_scheduler(
-            optimizer=optimizer,
+        self.scheduler = create_scheduler(
+            optimizer=self.optimizer,
             scheduler_type=scheduler_type,
             warmup_steps=warmup_steps,
             total_steps=total_steps,
@@ -215,9 +215,9 @@ class SimCLRExperimentTrainer:
                 checkpoint_path, map_location=self.device, weights_only=False
             )
             self.model.load_state_dict(checkpoint["model_state_dict"])
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            if scheduler and checkpoint.get("scheduler_state_dict"):
-                scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            if self.scheduler and checkpoint.get("scheduler_state_dict"):
+                self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
             if checkpoint.get("precision_state_dict"):
                 self.precision.load_state_dict(checkpoint["precision_state_dict"])
             if "callbacks_state_dict" in checkpoint:
@@ -248,7 +248,7 @@ class SimCLRExperimentTrainer:
             )
             for batch_idx, (x1, x2) in enumerate(pbar):
                 x1, x2 = x1.to(self.device), x2.to(self.device)
-                optimizer.zero_grad(set_to_none=True)
+                self.optimizer.zero_grad(set_to_none=True)
 
                 with self.precision.autocast():
                     loss, acc = self.model.training_step(x1, x2)
@@ -259,7 +259,7 @@ class SimCLRExperimentTrainer:
 
                 if grad_clip is not None:
                     grad_norm = self.precision.clip_gradient(
-                        optimizer,
+                        self.optimizer,
                         self.model.parameters(),
                         grad_clip,
                     ).item()
@@ -270,11 +270,11 @@ class SimCLRExperimentTrainer:
 
                 grad_norm_sum += grad_norm
 
-                self.precision.step(optimizer)
+                self.precision.step(self.optimizer)
                 self.precision.update()
 
-                if scheduler and step_frequency == "batch":
-                    scheduler.step()
+                if self.scheduler and step_frequency == "batch":
+                    self.scheduler.step()
 
                 train_loss_total += loss.item() * x1.size(0)
                 train_acc_total += acc.item() * x1.size(0)
@@ -302,8 +302,8 @@ class SimCLRExperimentTrainer:
             avg_val_loss = val_loss_total / len(val_loader.dataset)
             avg_val_acc = val_acc_total / len(val_loader.dataset)
 
-            if scheduler and step_frequency == "epoch":
-                scheduler.step(avg_val_loss)
+            if self.scheduler and step_frequency == "epoch":
+                self.scheduler.step(avg_val_loss)
 
             epoch_duration = time.time() - epoch_start
             logs = {
@@ -312,7 +312,7 @@ class SimCLRExperimentTrainer:
                 "train_contrastive_acc": avg_train_acc,
                 "val_loss": avg_val_loss,
                 "val_contrastive_acc": avg_val_acc,
-                "learning_rate": optimizer.param_groups[0]["lr"],
+                "learning_rate": self.optimizer.param_groups[0]["lr"],
                 "grad_norm": grad_norm_sum / num_batches if num_batches > 0 else 0.0,
                 "epoch_time_sec": epoch_duration,
             }
