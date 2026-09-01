@@ -268,7 +268,7 @@ class ExperimentManager:
                     summary += f"| {int(row['run_id'])} | {row['accuracy']:.4f} | {row['macro_f1']:.4f} | {row.get('learning_rate', 'N/A')} | {row.get('batch_size', 'N/A')} |\n"
             except Exception as e:
                 summary += f"(Error reading results: {e})\n"
-                        
+
                 summary += (
                     f"\n"
                     f"## Instructions\n"

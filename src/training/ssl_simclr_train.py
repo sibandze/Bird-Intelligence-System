@@ -254,7 +254,7 @@ class SimCLRExperimentTrainer:
                 self.precision.scale_loss(loss).backward()
 
                 grad_clip = self.config["training"].get("gradient_clip")
-                
+
                 if grad_clip is not None:
                     grad_norm = self.precision.clip_gradient(
                         optimizer,
@@ -263,9 +263,8 @@ class SimCLRExperimentTrainer:
                     ).item()
                 else:
                     grad_norm = torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(),
-                        max_norm=float("inf")
-                    ).item()                
+                        self.model.parameters(), max_norm=float("inf")
+                    ).item()
 
                 grad_norm_sum += grad_norm
 
@@ -331,6 +330,6 @@ class SimCLRExperimentTrainer:
         return {
             "val_loss": avg_val_loss,
             "val_contrastive_acc": avg_val_acc,
-            "train_loss": avg_train_loss,                
+            "train_loss": avg_train_loss,
             "train_contrastive_acc": avg_train_acc,
         }
