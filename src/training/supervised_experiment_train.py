@@ -28,6 +28,7 @@ from src.training.callbacks import (
     JSONLoggerCallback,
     CSVLoggerCallback,
     WandBLoggerCallback,
+    PlotMetricsCallback,
 )
 
 
@@ -123,6 +124,7 @@ class SupervisedExperimentTrainer:
                 ),
                 JSONLoggerCallback(self.run_dir),
                 CSVLoggerCallback(self.run_dir),
+                PlotMetricsCallback(self.run_dir),
                 WandBLoggerCallback(config, self.run_dir),
             ]
         self.cb_runner = CallbackRunner(callbacks)
