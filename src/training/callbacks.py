@@ -18,13 +18,16 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import torch
 import matplotlib
+
 matplotlib.use("Agg")  # non-interactive backend
 import matplotlib.pyplot as plt
 import wandb
+
 try:
     import wandb
 except ImportError:
     wandb = None
+
 
 class Callback:
     """Base class for all training callbacks."""
@@ -184,66 +187,46 @@ class CheckpointCallback(Callback):
 
     def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
         current_score = logs.get(self.monitor)
-        
+
         improved = (
             current_score > self.best_score
             if self.mode == "max"
             else current_score < self.best_score
         )
-        
+
         if improved:
             self.best_score = current_score
-            
+
         checkpoint = {
             "epoch": epoch + 1,
             "logs": logs,
             "model_state_dict": trainer.model.state_dict(),
             "optimizer_state_dict": trainer.optimizer.state_dict(),
             "scheduler_state_dict": (
-                trainer.scheduler.state_dict()
-                if trainer.scheduler else None
+                trainer.scheduler.state_dict() if trainer.scheduler else None
             ),
             "precision_state_dict": trainer.precision.state_dict(),
             "callbacks_state_dict": trainer.cb_runner.state_dict(),
             "torch_rng_state": torch.get_rng_state(),
             "cuda_rng_state": (
-                torch.cuda.get_rng_state_all()
-                if torch.cuda.is_available()
-                else None
+                torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
             ),
             "git_commit": getattr(trainer, "git_hash", None),
             "torch_version": torch.__version__,
-            "cuda_version": (
-                torch.version.cuda
-                if torch.cuda.is_available()
-                else None
-            ),
+            "cuda_version": (torch.version.cuda if torch.cuda.is_available() else None),
         }
-        
-        torch.save(
-            checkpoint,
-            self.run_dir / "checkpoint_last.pth"
-        )
-        
-        torch.save(
-            trainer.model.state_dict(),
-            self.run_dir / "last_model.pth"
-        )
-        
+
+        torch.save(checkpoint, self.run_dir / "checkpoint_last.pth")
+
+        torch.save(trainer.model.state_dict(), self.run_dir / "last_model.pth")
+
         if improved:
-            torch.save(
-                checkpoint,
-                self.run_dir / "checkpoint_best.pth"
-            )
-            
-            torch.save(
-                trainer.model.state_dict(),
-                self.run_dir / "best_model.pth"
-            )            
-            
+            torch.save(checkpoint, self.run_dir / "checkpoint_best.pth")
+
+            torch.save(trainer.model.state_dict(), self.run_dir / "best_model.pth")
+
             print(
-                f"    ✓ Saved new best model "
-                f"({self.monitor}: {current_score:.4f})"
+                f"    ✓ Saved new best model " f"({self.monitor}: {current_score:.4f})"
             )
 
     def state_dict(self) -> Dict[str, Any]:
@@ -342,7 +325,7 @@ class WandBLoggerCallback(Callback):
 
 
 # =====================================================================
-# 4. Plot Metrics Callback
+# 5. Plot Metrics Callback
 # =====================================================================
 class PlotMetricsCallback(Callback):
     """
@@ -381,10 +364,20 @@ class PlotMetricsCallback(Callback):
         if self.metrics is None:
             # Auto-detect: all keys that are numeric and change across epochs
             # Here we simply plot all keys that are int/float and are not metadata
-            excluded = {"epoch", "learning_rate", "grad_norm", "epoch_time_sec",
-                        "samples_per_sec", "loss_scale", "precision"}
-            metrics = [k for k in self.history[0].keys()
-                       if k not in excluded and isinstance(self.history[0][k], (int, float))]
+            excluded = {
+                "epoch",
+                "learning_rate",
+                "grad_norm",
+                "epoch_time_sec",
+                "samples_per_sec",
+                "loss_scale",
+                "precision",
+            }
+            metrics = [
+                k
+                for k in self.history[0].keys()
+                if k not in excluded and isinstance(self.history[0][k], (int, float))
+            ]
         else:
             metrics = self.metrics
 
@@ -393,11 +386,13 @@ class PlotMetricsCallback(Callback):
 
         # Create figure with subplots for each metric
         num_metrics = len(metrics)
-        fig, axes = plt.subplots(1, num_metrics, figsize=(self.figsize[0] * num_metrics, self.figsize[1]))
+        fig, axes = plt.subplots(
+            1, num_metrics, figsize=(self.figsize[0] * num_metrics, self.figsize[1])
+        )
         if num_metrics == 1:
             axes = [axes]
 
-        epochs = [h.get("epoch", i+1) for i, h in enumerate(self.history)]
+        epochs = [h.get("epoch", i + 1) for i, h in enumerate(self.history)]
 
         for ax, metric in zip(axes, metrics):
             values = [h.get(metric) for h in self.history]
@@ -406,7 +401,14 @@ class PlotMetricsCallback(Callback):
             clean_values = [v for v in values if v is not None]
             if not clean_values:
                 continue
-            ax.plot(clean_epochs, clean_values, marker='o', linestyle='-', linewidth=2, markersize=4)
+            ax.plot(
+                clean_epochs,
+                clean_values,
+                marker="o",
+                linestyle="-",
+                linewidth=2,
+                markersize=4,
+            )
             ax.set_title(metric)
             ax.set_xlabel("Epoch")
             ax.set_ylabel(metric)
