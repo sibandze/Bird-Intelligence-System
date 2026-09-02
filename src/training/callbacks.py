@@ -168,10 +168,14 @@ class CheckpointCallback(Callback):
     """
     Generic checkpoint callback for any training mode.
 
-    - Always saves the latest checkpoint (`checkpoint_last.pth`) and model weights (`last_model.pth`).
-    - Saves the best checkpoint (`checkpoint_best.pth`) and weights (`best_model.pth`)
-      based on a configurable monitored metric (e.g., `val_loss` for SSL, `val_acc` for supervised).
-    - Stores all epoch logs in the checkpoint for reproducibility.
+    - Always saves the latest full checkpoint (`checkpoint_last.pth`) for resumption.
+    - Saves the best full checkpoint (`checkpoint_best.pth`) for resumption.
+    - Saves weights-only files (`last_model.pth`, `best_model.pth`) using
+      `state_dict_fn` if provided, otherwise the full model state dict.
+
+    For SSL pretraining, pass `state_dict_fn=lambda m: m.encoder.state_dict()`
+    so that only the encoder is saved in the weights files — the projection head
+    is discarded since it's only useful during contrastive training.
     """
 
     def __init__(
@@ -179,11 +183,19 @@ class CheckpointCallback(Callback):
         run_dir: Path,
         monitor: str = "val_acc",
         mode: str = "max",
+        state_dict_fn=None,
     ):
         self.run_dir = Path(run_dir)
         self.monitor = monitor
         self.mode = mode
         self.best_score = float("-inf") if mode == "max" else float("inf")
+        self.state_dict_fn = state_dict_fn
+
+    def _get_weights_state_dict(self, model):
+        """Extract state dict for the weights-only file."""
+        if self.state_dict_fn is not None:
+            return self.state_dict_fn(model)
+        return model.state_dict()
 
     def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
         current_score = logs.get(self.monitor)
@@ -197,6 +209,7 @@ class CheckpointCallback(Callback):
         if improved:
             self.best_score = current_score
 
+        # Full checkpoint — always saves everything for resumption
         checkpoint = {
             "epoch": epoch + 1,
             "logs": logs,
@@ -216,17 +229,19 @@ class CheckpointCallback(Callback):
             "cuda_version": (torch.version.cuda if torch.cuda.is_available() else None),
         }
 
-        torch.save(checkpoint, self.run_dir / "checkpoint_last.pth")
+        # Weights-only — uses state_dict_fn if provided
+        weights = self._get_weights_state_dict(trainer.model)
 
-        torch.save(trainer.model.state_dict(), self.run_dir / "last_model.pth")
+        torch.save(checkpoint, self.run_dir / "checkpoint_last.pth")
+        torch.save(weights, self.run_dir / "last_model.pth")
 
         if improved:
             torch.save(checkpoint, self.run_dir / "checkpoint_best.pth")
-
-            torch.save(trainer.model.state_dict(), self.run_dir / "best_model.pth")
+            torch.save(weights, self.run_dir / "best_model.pth")
 
             print(
-                f"    ✓ Saved new best model " f"({self.monitor}: {current_score:.4f})"
+                f"    ✓ Saved new best model "
+                f"({self.monitor}: {current_score:.4f})"
             )
 
     def state_dict(self) -> Dict[str, Any]:
@@ -234,7 +249,6 @@ class CheckpointCallback(Callback):
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
         self.best_score = state_dict.get("best_score", self.best_score)
-
 
 # =====================================================================
 # 3. JSON Logger Callback
