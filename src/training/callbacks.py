@@ -240,8 +240,7 @@ class CheckpointCallback(Callback):
             torch.save(weights, self.run_dir / "best_model.pth")
 
             print(
-                f"    ✓ Saved new best model "
-                f"({self.monitor}: {current_score:.4f})"
+                f"    ✓ Saved new best model " f"({self.monitor}: {current_score:.4f})"
             )
 
     def state_dict(self) -> Dict[str, Any]:
@@ -249,6 +248,7 @@ class CheckpointCallback(Callback):
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
         self.best_score = state_dict.get("best_score", self.best_score)
+
 
 # =====================================================================
 # 3. JSON Logger Callback
