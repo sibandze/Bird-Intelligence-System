@@ -65,7 +65,12 @@ class SimCLRExperimentTrainer:
 
         if callbacks is None:
             callbacks = [
-                CheckpointCallback(self.run_dir, monitor="val_loss", mode="min"),
+                CheckpointCallback(
+                    run_dir=self.run_dir,
+                    monitor="val_loss",
+                    mode="min",
+                    state_dict_fn=lambda m: m.encoder.state_dict(),
+                ),
                 EarlyStoppingCallback(
                     monitor="val_loss",
                     mode="min",
