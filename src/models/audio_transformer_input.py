@@ -1,4 +1,28 @@
 # src/models/audio_transformer_input.py
+"""
+Audio Transformer input module.
+
+Pipeline:
+    (B, n_mels, time)
+            │
+            ▼
+    Patch Embedding
+            │
+            ▼
+    Add CLS Token
+            │
+            ▼
+    Add Learnable Position Embeddings
+            │
+            ▼
+    Input Dropout
+            │
+            ▼
+    (B, num_patches + 1, embed_dim)
+
+This module converts Mel spectrograms into a sequence of transformer
+tokens compatible with the encoder.
+"""
 
 import torch
 import torch.nn as nn
@@ -8,9 +32,13 @@ from .positional_encoding import PositionalEncoding
 
 
 class AudioTransformerInput(nn.Module):
-
     def __init__(
-        self, n_mels=128, patch_size=25, embed_dim=256, max_len=1000, dropout=0.1
+        self,
+        n_mels: int = 128,
+        patch_size: int = 25,
+        embed_dim: int = 256,
+        max_len: int = 1000,
+        dropout: float = 0.1,
     ):
         super().__init__()
 
@@ -28,8 +56,7 @@ class AudioTransformerInput(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
-
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         # -------------------------
         # Patch embedding
         # (B, N, D)
@@ -47,7 +74,7 @@ class AudioTransformerInput(nn.Module):
         x = torch.cat([cls, x], dim=1)
 
         # -------------------------
-        # Position embeddings
+        # Add learnable position embeddings
         # -------------------------
         x = self.pos_enc(x)
         x = self.dropout(x)
