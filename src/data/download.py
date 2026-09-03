@@ -1,29 +1,33 @@
 # src/data/download.py
-
 import os
+from pathlib import Path
+from typing import Optional
+
 import requests
 
-
-def download_audio(url, filename, output_dir):
+def download_audio(url: str, filename: str, output_dir: str | Path) -> Optional[Path]:
     """
     Downloads an audio file from a given URL.
 
     Args:
-        url (str): The URL of the audio file.
-        filename (str): The desired filename for the downloaded audio.
-        output_dir (str): The directory to save the downloaded audio file.
+        url: The URL of the audio file.
+        filename: Desired filename.
+        output_dir: Directory to save to.
 
     Returns:
-        str: The full path to the downloaded file, or None if download fails.
+        Full path to the downloaded file, or None if download fails.
     """
-    os.makedirs(output_dir, exist_ok=True)
-    filepath = os.path.join(output_dir, filename)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filepath: Path = output_dir / filename
+
     try:
-        response = requests.get(url, stream=True)
-        response.raise_for_status()  # Raise an exception for HTTP errors
+        response = requests.get(url, stream=True, timeout=60)
+        response.raise_for_status()
         with open(filepath, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+                if chunk:
+                    f.write(chunk)
         print(f"Downloaded: {filepath}")
         return filepath
     except requests.exceptions.RequestException as e:
