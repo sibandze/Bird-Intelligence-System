@@ -1,24 +1,30 @@
 # src/models/positional_encoding.py
-
 import torch
 import torch.nn as nn
 
-
 class PositionalEncoding(nn.Module):
-    def __init__(self, embed_dim, max_len=1000):  # max_len = 1000
+    def __init__(self, embed_dim: int, max_len: int = 1000) -> None:
         super().__init__()
+        self.max_len: int = max_len
+        self.embed_dim: int = embed_dim
 
-        # 1. Define a learnable parameter of shape (1, max_len, embed_dim)
-        self.position_embeddings = nn.Parameter(torch.zeros(1, max_len, embed_dim))
-
-        # 2. Initialize with a small standard deviation (standard ViT/DeiT convention)
+        self.position_embeddings: nn.Parameter = nn.Parameter(
+            torch.zeros(1, max_len, embed_dim)
+        )
         nn.init.normal_(self.position_embeddings, std=0.02)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        x: (B, T, D) -> Where T is (num_patches + 1) due to the CLS token
-        """
-        T = x.size(1)
+        Args:
+            x: (B, T, D) where T = num_patches + 1 if CLS token is used
 
-        # 3. Slice the parameter matrix up to the current sequence length T
-        return x + self.position_embeddings[:, :T]
+        Returns:
+            (B, T, D) with positional information added
+        """
+        t: int = x.size(1)
+        if t > self.max_len:
+            raise ValueError(
+                f"Sequence length {t} > max_len {self.max_len}. "
+                f"Increase max_len in PositionalEncoding."
+            )
+        return x + self.position_embeddings[:, :t]
