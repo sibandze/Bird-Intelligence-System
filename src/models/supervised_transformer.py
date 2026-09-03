@@ -1,61 +1,34 @@
 # src/models/supervised_transformer.py
 """
-Mel Spectrogram
-        │
-        ▼
-AudioTransformerInput
-        │
-        ▼
-Transformer Encoder
-        │
-        ▼
-CLS Token (out[:, 0])
-        │
-        ▼
-LayerNorm
-        │
-        ▼
-Linear
-        │
-        ▼
-GELU
-        │
-        ▼
-Dropout
-        │
-        ▼
-Linear
-        │
-        ▼
-234 Logits
+Mel Spectrogram -> AudioTransformerInput -> Transformer Encoder
+-> CLS Token (out[:, 0]) -> LayerNorm -> Linear -> GELU -> Dropout -> Linear -> Logits
 """
+from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
+
 from .encoder import Encoder
 
-
 class SupervisedTransformer(nn.Module):
-    """
-    Supervised Transformer Classifier for Bird Species ID.
+    """Supervised Transformer Classifier for Bird Species ID."""
 
-    Architecture: Mel -> PatchEmbed -> Transformer -> CLS -> MLP Head -> Logits
-    """
-
-    def __init__(self, config: dict, num_classes: int, device: str = "cpu"):
+    def __init__(
+        self, config: Dict[str, Any], num_classes: int, device: torch.device | str = "cpu"
+    ) -> None:
         super().__init__()
-        audio_cfg = config["audio"]
-        model_cfg = config["model"]
+        audio_cfg: Dict[str, Any] = config["audio"]
+        model_cfg: Dict[str, Any] = config["model"]
 
-        n_mels = audio_cfg["n_mels"]
-        patch_size = model_cfg["patch_size"]
-        embed_dim = model_cfg["embed_dim"]
-        segment_size = audio_cfg["segment_size"]
+        n_mels: int = audio_cfg["n_mels"]
+        patch_size: int = model_cfg["patch_size"]
+        embed_dim: int = model_cfg["embed_dim"]
+        segment_size: int = audio_cfg["segment_size"]
 
-        num_patches = segment_size // patch_size
-        max_len = num_patches + 1 + 10  # +1 CLS, + buffer
+        num_patches: int = segment_size // patch_size
+        max_len: int = num_patches + 1 + 10  # +1 CLS + buffer
 
-        self.encoder = Encoder(
+        self.encoder: Encoder = Encoder(
             n_mels=n_mels,
             patch_size=patch_size,
             embed_size=embed_dim,
@@ -67,8 +40,7 @@ class SupervisedTransformer(nn.Module):
             max_len=max_len,
         )
 
-        # Head: CLS -> LN -> Linear -> GELU -> Dropout -> Linear
-        self.head = nn.Sequential(
+        self.head: nn.Sequential = nn.Sequential(
             nn.LayerNorm(embed_dim),
             nn.Linear(embed_dim, embed_dim),
             nn.GELU(),
@@ -77,8 +49,7 @@ class SupervisedTransformer(nn.Module):
         )
         self._init_weights()
 
-    def _init_weights(self):
-        # ViT style init for head
+    def _init_weights(self) -> None:
         for m in self.head.modules():
             if isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, std=0.02)
@@ -88,17 +59,21 @@ class SupervisedTransformer(nn.Module):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
 
-    def forward(self, x, mask=None):
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         """
-        x: (B, n_mels, time)  e.g. (B, 128, 187)
-        mask: (B, 1, 1, seq_len) optional attention mask
-        returns: (B, num_classes) logits
+        Args:
+            x: (B, n_mels, time)
+            mask: (B, 1, 1, seq_len) optional
+
+        Returns:
+            (B, num_classes) logits
         """
-        # Encoder out: (B, N_patches+1, embed_dim)
-        enc_out = self.encoder(x, mask)
-
-        # CLS token is first token
-        cls_token = enc_out[:, 0]  # (B, embed_dim)
-
-        logits = self.head(cls_token)  # (B, num_classes)
+        enc_out: torch.Tensor = self.encoder(x, mask)
+        cls_token: torch.Tensor = enc_out[:, 0]
+        logits: torch.Tensor = self.head(cls_token)
         return logits
+
+    def get_encoder(self) -> Encoder:
+        return self.encoder
