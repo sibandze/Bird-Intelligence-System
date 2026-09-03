@@ -1,105 +1,80 @@
 # src/data/process_audio.py
+from pathlib import Path
+from typing import Optional, Tuple, Union
 
-import os
-import numpy as np
 import librosa
 import librosa.display
 import matplotlib.pyplot as plt
-from pathlib import Path
-
+import numpy as np
 
 def generate_mel_spectrogram_data(
-    audio_path, sr=32000, n_fft=2048, hop_length=512, n_mels=128
-):
+    audio_path: Union[str, Path],
+    sr: int = 32000,
+    n_fft: int = 2048,
+    hop_length: int = 512,
+    n_mels: int = 128,
+) -> Tuple[Optional[np.ndarray], Optional[int]]:
     """
-    Loads an audio file and generates its Mel spectrogram data.
-
-    Args:
-        audio_path (str): The path to the audio file.
-        sr (int): Sampling rate for audio loading. Defaults to 32000.
-        n_fft (int): FFT window size for Mel spectrogram. Defaults to 2048.
-        hop_length (int): Number of samples between successive frames. Defaults to 512.
-        n_mels (int): Number of Mel bands to generate. Defaults to 128.
+    Loads an audio file and generates its Mel spectrogram.
 
     Returns:
-        tuple: (numpy.ndarray, int) The Mel spectrogram in dB scale and the loaded sampling rate,
-               or (None, None) if an error occurs.
+        (mel_db, sr_loaded) or (None, None) on error.
     """
     try:
-        # Load the audio file
+        y: np.ndarray
+        sr_loaded: int
         y, sr_loaded = librosa.load(audio_path, sr=sr)
 
-        # Compute the Mel spectrogram
-        mel_spectrogram = librosa.feature.melspectrogram(
+        mel_spectrogram: np.ndarray = librosa.feature.melspectrogram(
             y=y, sr=sr_loaded, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels
         )
-
-        # Convert to dB scale
-        mel_spectrogram_db = librosa.power_to_db(mel_spectrogram, ref=np.max)
+        mel_spectrogram_db: np.ndarray = librosa.power_to_db(
+            mel_spectrogram, ref=np.max
+        )
 
         return mel_spectrogram_db, sr_loaded
     except Exception as e:
         print(f"Error generating Mel spectrogram data for {audio_path}: {e}")
         return None, None
 
-
-def save_spectrogram_npy(spectrogram_data, out_path):
-    """
-    Saves spectrogram numpy array to .npy file.
-
-    Args:
-        spectrogram_data: np.ndarray, mel spectrogram in dB
-        out_path: str or Path, full path like 'processed/mels/file.npy'
-    Returns: Path to saved file
-    """
+def save_spectrogram_npy(
+    spectrogram_data: np.ndarray, out_path: Union[str, Path]
+) -> Path:
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(out_path, spectrogram_data)
     return out_path
 
-
 def preprocess_and_save(
-    audio_path, out_path, sr=32000, n_fft=2048, hop_length=512, n_mels=128
-):
-    """
-    Load audio -> mel spectrogram -> save as .npy
-    Just wraps the 2 functions above, no reimplementation.
-
-    Returns: True if success, False if failed
-    """
-    mel_db, sr_loaded = generate_mel_spectrogram_data(
+    audio_path: Union[str, Path],
+    out_path: Union[str, Path],
+    sr: int = 32000,
+    n_fft: int = 2048,
+    hop_length: int = 512,
+    n_mels: int = 128,
+) -> bool:
+    """Load audio -> mel -> save.npy. Returns True on success."""
+    mel_db, _ = generate_mel_spectrogram_data(
         audio_path, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels
     )
-
     if mel_db is None:
         return False
 
     save_spectrogram_npy(mel_db, out_path)
     return True
 
-
-def load_local_spectrogram(npy_path):
-    """
-    Load spectrogram.npy from disk.
-    Returns: np.ndarray shape (n_mels, T)
-    Raises FileNotFoundError if path invalid.
-    """
+def load_local_spectrogram(npy_path: Union[str, Path]) -> np.ndarray:
     npy_path = Path(npy_path)
     if not npy_path.exists():
         raise FileNotFoundError(f"Spectrogram not found: {npy_path}")
     return np.load(npy_path)
 
-
 def visualize_mel_spectrogram(
-    spectrogram_data, sr, title="Mel Spectrogram", hop_length=512
-):
-    """
-    Visualizes a Mel spectrogram numpy array.
-
-    Args:
-        spectrogram_data (numpy.ndarray): The Mel spectrogram data in dB.
-        sr (int): Sampling rate.
-        title (str): Title for the plot. Defaults to 'Mel Spectrogram'.
-        hop_length (int): Number of samples between successive frames.
-    """
+    spectrogram_data: np.ndarray,
+    sr: int,
+    title: str = "Mel Spectrogram",
+    hop_length: int = 512,
+) -> None:
     plt.figure(figsize=(10, 4))
     librosa.display.specshow(
         spectrogram_data, sr=sr, x_axis="time", y_axis="mel", hop_length=hop_length
@@ -109,17 +84,15 @@ def visualize_mel_spectrogram(
     plt.tight_layout()
     plt.show()
 
+def save_spectrogram_image(
+    spectrogram_data: np.ndarray,
+    sr: int,
+    output_path: Union[str, Path],
+    hop_length: int = 512,
+) -> None:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-def save_spectrogram_image(spectrogram_data, sr, output_path, hop_length=512):
-    """
-    Saves a Mel spectrogram numpy array as an image.
-
-    Args:
-        spectrogram_data (numpy.ndarray): The Mel spectrogram data in dB.
-        sr (int): Sampling rate.
-        output_path (str): The full path to save the spectrogram image.
-        hop_length (int): Number of samples between successive frames.
-    """
     plt.figure(figsize=(10, 4))
     librosa.display.specshow(
         spectrogram_data, sr=sr, x_axis="time", y_axis="mel", hop_length=hop_length
