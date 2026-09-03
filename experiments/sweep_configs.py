@@ -24,7 +24,7 @@ class HyperparameterSweep:
         return configs
 
 
-# ===== BASELINE SWEEPS =====
+# ===== SUPERVISED BASELINE SWEEPS =====
 
 BASELINE_LEARNING_RATE_SWEEP = HyperparameterSweep(
     name="baseline_lr_sweep",
@@ -70,7 +70,7 @@ BASELINE_AUGMENTATION_SWEEP = HyperparameterSweep(
     },
 )
 
-# ===== TARGETED EXPLORATION SWEEPS =====
+# ===== TARGETED SUPERVISED SWEEPS =====
 
 FOCUSED_LR_MOMENTUM_SWEEP = HyperparameterSweep(
     name="focused_lr_momentum",
@@ -115,9 +115,73 @@ MIXED_PRECISION_SWEEP = HyperparameterSweep(
     },
 )
 
+# ===== SSL SWEEPS =====
+
+SSL_LEARNING_RATE_SWEEP = HyperparameterSweep(
+    name="ssl_lr_sweep",
+    description="Sweep over learning rates for SimCLR pretraining",
+    params={
+        "learning_rate": [1e-4, 3e-4, 5e-4, 1e-3],
+    },
+)
+
+SSL_TEMPERATURE_SWEEP = HyperparameterSweep(
+    name="ssl_temperature_sweep",
+    description="Sweep over contrastive temperature values",
+    params={
+        "temperature": [0.03, 0.05, 0.07, 0.1, 0.2],
+    },
+)
+
+SSL_PROJECTION_SWEEP = HyperparameterSweep(
+    name="ssl_projection_sweep",
+    description="Sweep over projection head dimensions",
+    params={
+        "projection_hidden_dim": [128, 256, 512],
+        "projection_output_dim": [64, 128, 256],
+    },
+)
+
+SSL_BATCH_SIZE_SWEEP = HyperparameterSweep(
+    name="ssl_batch_sweep",
+    description="Sweep over batch sizes for SSL (larger = more negatives = better)",
+    params={
+        "batch_size": [16, 32, 64, 128],
+    },
+)
+
+SSL_AUGMENTATION_SWEEP = HyperparameterSweep(
+    name="ssl_augmentation_sweep",
+    description="Sweep over augmentation strength for SSL views",
+    params={
+        "spec_aug_prob": [0.3, 0.5, 0.7, 0.9],
+        "freq_mask_param": [4, 6, 10],
+        "time_mask_param": [5, 10, 20],
+    },
+)
+
+SSL_WEIGHT_DECAY_SWEEP = HyperparameterSweep(
+    name="ssl_weight_decay_sweep",
+    description="Sweep over weight decay for SSL pretraining",
+    params={
+        "weight_decay": [0.0, 1e-6, 1e-5, 1e-4, 1e-3],
+    },
+)
+
+SSL_QUICK_SANITY = HyperparameterSweep(
+    name="ssl_quick_sanity",
+    description="Quick sanity check: minimal config to verify SSL pipeline works",
+    params={
+        "learning_rate": [3e-4],
+        "batch_size": [16],
+        "temperature": [0.07],
+    },
+)
+
 # ===== SWEEP SUITES =====
 
 SWEEP_SUITES = {
+    # --- Supervised ---
     "quick_baseline": [
         BASELINE_LEARNING_RATE_SWEEP,
     ],
@@ -141,5 +205,25 @@ SWEEP_SUITES = {
     "scheduler_ablation": [
         SCHEDULER_FINETUNE_SWEEP,
         WARMUP_SCHEDULER_SWEEP,
+    ],
+    # --- SSL ---
+    "ssl_sanity": [
+        SSL_QUICK_SANITY,
+    ],
+    "ssl_lr": [
+        SSL_LEARNING_RATE_SWEEP,
+    ],
+    "ssl_standard": [
+        SSL_LEARNING_RATE_SWEEP,
+        SSL_TEMPERATURE_SWEEP,
+        SSL_WEIGHT_DECAY_SWEEP,
+    ],
+    "ssl_comprehensive": [
+        SSL_LEARNING_RATE_SWEEP,
+        SSL_TEMPERATURE_SWEEP,
+        SSL_PROJECTION_SWEEP,
+        SSL_BATCH_SIZE_SWEEP,
+        SSL_AUGMENTATION_SWEEP,
+        SSL_WEIGHT_DECAY_SWEEP,
     ],
 }
