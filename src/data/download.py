@@ -5,7 +5,7 @@ from typing import Optional
 
 import requests
 
-def download_audio(url: str, filename: str, output_dir: str | Path) -> Optional[Path]:
+def download_audio(url: str, filename: str, output_dir: str | Path, chunk_size = 8192) -> Optional[Path]:
     """
     Downloads an audio file from a given URL.
 
@@ -25,7 +25,7 @@ def download_audio(url: str, filename: str, output_dir: str | Path) -> Optional[
         response = requests.get(url, stream=True, timeout=60)
         response.raise_for_status()
         with open(filepath, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
+            for chunk in response.iter_content(chunk_size=chunk_size):
                 if chunk:
                     f.write(chunk)
         print(f"Downloaded: {filepath}")
