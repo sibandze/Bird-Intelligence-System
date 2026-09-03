@@ -1,11 +1,45 @@
 # src/models/patch_embedding.py
+"""
+    Input
+    -----
+    (B, 128, 600)
+    
+    ↓
+    
+    Patch size = 25 frames
+    
+    ↓
+    
+    24 patches
+    
+    ↓
+    
+    Flatten
+    
+    ↓
+    
+    (B, 24, 3200)
+    
+    ↓
+    
+    Linear Projection
+    
+    ↓
+    
+    (B, 24, 256)
+"""
 
 import torch
 import torch.nn as nn
 
 
 class SpectrogramPatchEmbedding(nn.Module):
-    def __init__(self, n_mels, patch_size, embed_dim):  # (128, 25, 256)
+    def __init__(
+        self, 
+        n_mels: int, 
+        patch_size: int, 
+        embed_dim: int,
+    ):  # (128, 25, 256)
         super().__init__()
 
         self.n_mels = n_mels
@@ -14,7 +48,10 @@ class SpectrogramPatchEmbedding(nn.Module):
         # each patch is flattened then projected
         self.projection = nn.Linear(n_mels * patch_size, embed_dim)
 
-    def forward(self, x):
+    def forward(
+        self,
+        x: torch.Tensor
+    ) -> torch.Tensor:
         """
         x: (B, n_mels, time)
         returns: (B, num_patches, embed_dim)
