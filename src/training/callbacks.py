@@ -144,7 +144,8 @@ class EarlyStoppingCallback(Callback):
             self.patience_counter += 1
             if self.patience_counter >= self.patience:
                 print(
-                    f"\n ⏹ Early stopping triggered! No improvement in '{self.monitor}' for {self.patience} epochs."
+                    f"\n ⏹ Early stopping triggered!",
+                    f"No improvement in '{self.monitor}' for {self.patience} epochs."
                 )
                 trainer.request_stop()
 
