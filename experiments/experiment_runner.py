@@ -74,6 +74,7 @@ class ExperimentManager:
 
     def set_seed(self, seed: int = 42):
         """Set random seeds for reproducibility."""
+        self.seed = seed
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
@@ -96,7 +97,7 @@ class ExperimentManager:
             data_cfg = self.base_config.get('data', {})
             num_classes = data_cfg.get('num_classes')
             num_samples_per_class = data_cfg.get('num_samples_per_class')
-            label_col = data_cfg.get('label_column')   # allow config override
+            label_col = data_cfg.get('label_column')
             
             if num_classes and num_samples_per_class:
                 print(f"🔬 Distilling dataset to {num_classes} classes x {num_samples_per_class} samples each")
