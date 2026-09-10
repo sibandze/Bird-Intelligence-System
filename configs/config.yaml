@@ -1,3 +1,4 @@
+# configs/config.yaml
 data:
   raw_audio_dir: "data/raw_audio"
   remote_spectrogram_targz_store: "https://drive.google.com/drive/folders/15-ZSNoXrnWPErWXFed3vWBjSuZqzSBP4"
