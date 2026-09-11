@@ -1,0 +1,2 @@
+google-colab-cli
+jupyter-kernel-client<1.0
