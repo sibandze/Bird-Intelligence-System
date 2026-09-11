@@ -10,7 +10,7 @@ BRANCH="dev-unsupervised"
 REPO_DIR="/content/Bird-Intelligence-System"
 
 echo "=== Step 1: Provision VM ==="
-colab new -s "$SESSION" --gpu "$GPU" --high-mem
+colab new -s "$SESSION" --gpu "$GPU"
 
 echo "=== Step 2: Mount Google Drive ==="
 colab drivemount -s "$SESSION"
@@ -35,7 +35,7 @@ print("Repo ready and deps installed.")
 PYEOF
 
 echo "=== Step 4: Restore data from Drive ==="
-colab upload -s "$SESSION" scripts/colab_restore_data.py "$REPO_DIR/scripts/colab_restore_data.py"
+#colab upload -s "$SESSION" scripts/colab_restore_data.py "$REPO_DIR/scripts/colab_restore_data.py"
 colab exec -s "$SESSION" -f scripts/colab_restore_data.py
 
 echo "=== Step 5: Verify ==="
