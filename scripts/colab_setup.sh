@@ -34,26 +34,15 @@ subprocess.run([sys.executable, "-m", "pip", "install", "-r",
 print("Repo ready and deps installed.")
 PYEOF
 
-echo "=== Step 4: Restore data from Drive ==="
-#colab upload -s "$SESSION" scripts/colab_restore_data.py "$REPO_DIR/scripts/colab_restore_data.py"
-colab exec -s "$SESSION" -f scripts/colab_restore_data.py
+echo "=== Step 4: Restore data from Drive ==="o
 
-echo "=== Step 5: Verify ==="
-colab exec -s "$SESSION" <<PYEOF
-import torch, os
+DRIVE_BACKUP_DIR = "/content/drive/MyDrive/Bird-Intelligence-System_data_and_outputs"
+print(f"Drive: {os.listdir(DRIVE_BACKUP_DIR)[:5]}")
 
-REPO = "$REPO_DIR"
-print(f"CUDA: {torch.cuda.is_available()}")
-if torch.cuda.is_available():
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-
-drive = "/content/drive/MyDrive"
-print(f"Drive: {os.listdir(drive)[:5]}")
-
-for label, rel in [("Audio", "data/raw_audio"),
-                    ("Spectrograms", "data/processed_spectrograms"),
-                    ("Metadata", "data/metadata")]:
-    full = os.path.join(REPO, rel)
+for label, rel in [("Audio archives", "archived_audio"),
+                    ("Spectrograms archives", "archived_spectrograms"),
+                    ("Metadata", "metadata")]:
+    full = os.path.join(DRIVE_BACKUP_DIR, rel)
     if os.path.isdir(full):
         n = len([f for f in os.listdir(full) if os.path.isfile(os.path.join(full, f))])
         print(f"  {label}: {n} file(s)")
@@ -66,7 +55,9 @@ echo "=== Setup complete ==="
 echo "Session: $SESSION | GPU: $GPU"
 echo ""
 echo "Next steps:"
-echo "  bash scripts/colab_experiment.sh ssl_sanity --dry-run"
-echo "  bash scripts/colab_experiment.sh ssl_standard"
+#echo "  bash scripts/colab_experiment.sh ssl_sanity --dry-run"
+#echo "  bash scripts/colab_experiment.sh ssl_standard"
+
+# Next step is to go to console then run restore
 echo "  colab console -s $SESSION    # interactive shell"
 echo "  colab stop -s $SESSION       # teardown when done"
