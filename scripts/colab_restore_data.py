@@ -140,7 +140,7 @@ def restore_archives(
     print(f"  [{archive_subdir}] Found {len(archives)} archive(s)")
     extracted = 0
 
-    for fname in tqdm(archivesves):
+    for fname in tqdm(archives):
         archive_path = os.path.join(drive_path, fname)
         try:
             with tarfile.open(archive_path, "r:gz") as tar:
@@ -206,7 +206,7 @@ def restore_files(
     print(f"  [{rel_dir}] Found {len(files)} matching file(s)")
     copied = 0
 
-    for fname in files:
+    for fname in tqdm(files):
         src = os.path.join(drive_path, fname)
         dst = os.path.join(local_path, fname)
 
