@@ -273,7 +273,6 @@ def main():
     total = 0
 
     # ── 1. Audio (from .tar.gz archives) ───────────────
-    # ── 1. Audio (from .tar.gz archives) ───────────────
     if args.include_audio:
         print(f"\n--- Restoring raw audio ---")
         total += restore_archives(
