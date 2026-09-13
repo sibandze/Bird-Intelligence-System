@@ -19,6 +19,7 @@ import sys
 import shutil
 import tarfile
 import argparse
+from tqdm import tqdm
 from pathlib import Path
 
 # ── Defaults (overridable via CLI args) ─────────────────
@@ -139,7 +140,7 @@ def restore_archives(
     print(f"  [{archive_subdir}] Found {len(archives)} archive(s)")
     extracted = 0
 
-    for fname in archives:
+    for fname in tqdm(archivesves):
         archive_path = os.path.join(drive_path, fname)
         try:
             with tarfile.open(archive_path, "r:gz") as tar:
