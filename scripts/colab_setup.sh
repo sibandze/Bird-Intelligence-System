@@ -34,7 +34,9 @@ subprocess.run([sys.executable, "-m", "pip", "install", "-r",
 print("Repo ready and deps installed.")
 PYEOF
 
-echo "=== Step 4: Restore data from Drive ==="o
+echo "=== Step 4: Restore data from Drive ==="
+colab exec -s "$SESSION" <<PYEOF
+import os
 
 DRIVE_BACKUP_DIR = "/content/drive/MyDrive/Bird-Intelligence-System_data_and_outputs"
 print(f"Drive: {os.listdir(DRIVE_BACKUP_DIR)[:5]}")
@@ -55,9 +57,5 @@ echo "=== Setup complete ==="
 echo "Session: $SESSION | GPU: $GPU"
 echo ""
 echo "Next steps:"
-#echo "  bash scripts/colab_experiment.sh ssl_sanity --dry-run"
-#echo "  bash scripts/colab_experiment.sh ssl_standard"
-
-# Next step is to go to console then run restore
 echo "  colab console -s $SESSION    # interactive shell"
 echo "  colab stop -s $SESSION       # teardown when done"
