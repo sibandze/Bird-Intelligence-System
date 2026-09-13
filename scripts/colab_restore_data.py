@@ -14,7 +14,6 @@ Usage (from local machine):
   colab exec -s bis -f scripts/colab_restore_data.py -- --include-audio
 """
 
-
 import os
 import sys
 import shutil
@@ -29,6 +28,7 @@ DRIVE_BACKUP_DIR = "/content/drive/MyDrive/Bird-Intelligence-System_data_and_out
 
 
 # ── Config Loading ──────────────────────────────────────
+
 
 def load_project_config(repo_dir: str) -> tuple[dict, dict]:
     """Load config.yaml and extract data paths + audio params."""
@@ -47,7 +47,9 @@ def load_project_config(repo_dir: str) -> tuple[dict, dict]:
 
     paths = {
         "raw_audio": data_cfg.get("raw_audio_dir", "data/raw_audio"),
-        "spectrograms": data_cfg.get("processed_npy_dir", "data/processed_spectrograms"),
+        "spectrograms": data_cfg.get(
+            "processed_npy_dir", "data/processed_spectrograms"
+        ),
         "metadata": data_cfg.get("metadata_dir", "data/metadata"),
     }
 
@@ -66,6 +68,7 @@ def build_spectrogram_pattern(params: dict) -> str:
 
 
 # ── Drive Inspection ────────────────────────────────────
+
 
 def inspect_drive(backup_dir: str, max_items: int = 8):
     """Print a summary of what's in the Drive backup directory."""
@@ -99,6 +102,7 @@ def inspect_drive(backup_dir: str, max_items: int = 8):
 
 
 # ── Restore Functions ───────────────────────────────────
+
 
 def restore_archives(
     archive_subdir: str,
@@ -165,7 +169,9 @@ def restore_archives(
             print(f"    WARNING: {fname}: {e}")
 
     action = "would extract" if dry_run else "extracted"
-    print(f"    {extracted} new file(s) {action} from {len(archives)} archive(s) -> {local_target_rel}/")
+    print(
+        f"    {extracted} new file(s) {action} from {len(archives)} archive(s) -> {local_target_rel}/"
+    )
     return extracted
 
 
@@ -218,7 +224,9 @@ def restore_files(
     print(f"    {copied} new file(s) {action} -> {rel_dir}/")
     return copied
 
+
 # ── Main ────────────────────────────────────────────────
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -226,14 +234,23 @@ def main():
     )
     parser.add_argument("--repo-dir", default=REPO_DIR)
     parser.add_argument("--backup-dir", default=DRIVE_BACKUP_DIR)
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Show what would be restored without copying")
-    parser.add_argument("--include-audio", action="store_true",
-                        help="Also restore raw audio archives (skipped by default)")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be restored without copying",
+    )
+    parser.add_argument(
+        "--include-audio",
+        action="store_true",
+        help="Also restore raw audio archives (skipped by default)",
+    )
     parser.add_argument("--skip-spectrograms", action="store_true")
     parser.add_argument("--skip-metadata", action="store_true")
-    parser.add_argument("--inspect-only", action="store_true",
-                        help="Only show Drive contents, don't restore")
+    parser.add_argument(
+        "--inspect-only",
+        action="store_true",
+        help="Only show Drive contents, don't restore",
+    )
     args = parser.parse_args()
 
     # ── Verify prerequisites ────────────────────────────
@@ -320,7 +337,9 @@ def main():
     for key, rel in paths.items():
         local = os.path.join(args.repo_dir, rel)
         if os.path.isdir(local):
-            count = len([f for f in os.listdir(local) if os.path.isfile(os.path.join(local, f))])
+            count = len(
+                [f for f in os.listdir(local) if os.path.isfile(os.path.join(local, f))]
+            )
             print(f"  {rel}: {count} file(s)")
         else:
             print(f"  {rel}: (does not exist)")
