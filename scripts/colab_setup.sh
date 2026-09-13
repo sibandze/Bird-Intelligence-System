@@ -34,7 +34,7 @@ subprocess.run([sys.executable, "-m", "pip", "install", "-r",
 print("Repo ready and deps installed.")
 PYEOF
 
-echo "=== Step 4: Restore data from Drive ==="
+echo "=== Step 4: Inspect data from Drive ==="
 colab exec -s "$SESSION" <<PYEOF
 import os
 
