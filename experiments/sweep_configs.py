@@ -45,7 +45,7 @@ BASELINE_LEARNING_RATE_SWEEP = HyperparameterSweep(
     params={
         "training.learning_rate": [
             #1e-5, 
-            5e-5, 
+            #5e-5, 
             1e-4, 
             5e-4,
             #1e-3
