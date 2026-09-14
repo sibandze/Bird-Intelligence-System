@@ -103,11 +103,12 @@ class ExperimentManager:
 
             # ---- Distillation ----
             data_cfg = self.base_config.get("data", {})
-            requested_classes = data_cfg.get("num_classes")
-            requested_samples = data_cfg.get("num_samples_per_class")
+            use_full_dataset = data_cfg.get("full_dataset", False)
             label_col = data_cfg.get("label_column")
 
-            if requested_classes and requested_samples:
+            if not use_full_dataset:
+                requested_classes = data_cfg.get("num_classes")
+                requested_samples = data_cfg.get("num_samples_per_class")
                 print(
                     f"🔬 Distilling dataset to {requested_classes} classes x {requested_samples} samples each"
                 )
@@ -169,7 +170,6 @@ class ExperimentManager:
                 self.base_config["data"]["num_classes"] = requested_classes
                 self.base_config["data"]["num_samples_per_class"] = requested_samples
             else:
-                # If no distillation requested, use full dataset
                 self.df = full_df
 
         return self.df
