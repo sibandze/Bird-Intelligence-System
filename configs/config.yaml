@@ -4,6 +4,7 @@ data:
   processed_npy_dir: "data/processed_spectrograms"
   metadata_dir: "data/metadata"
   data_csv: "data/birds_voices.csv"
+  full_dataset: true
   num_classes: 10
   num_samples_per_class: 50
   label_column: "scientific_name_id"
