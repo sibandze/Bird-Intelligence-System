@@ -14,23 +14,37 @@
 
 import csv
 import json
+import logging
+import os
+import random
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-import random
-import torch
+
 import numpy as np
+import torch
 import matplotlib
 
 matplotlib.use("Agg")  # non-interactive backend
 import matplotlib.pyplot as plt
 
+logger = logging.getLogger(__name__)
+
 try:
     import wandb
-    import logging
-
-    logger = logging.getLogger(__name__)
 except ImportError:
     wandb = None
+
+
+# ── Epoch-meta contract ────────────────────────────────────────────────
+# BaseTrainer is responsible for setting these fields in `logs` before
+# dispatching to callbacks:
+#   "epoch"    : 1-indexed local epoch (int)
+#   "attempt"  : resume attempt counter (0 = fresh run)
+#   "run_id"   : stable run identifier (usually run_dir.name)
+# JSONLoggerCallback internally derives and persists a fourth field:
+#   "global_epoch" : monotonic across resumes, derived from persisted history
+# All other callbacks must NOT treat these as metrics to plot or log.
+_EPOCH_META_KEYS = frozenset({"epoch", "global_epoch", "attempt", "run_id"})
 
 
 def _unwrap_compile(model):
@@ -38,6 +52,13 @@ def _unwrap_compile(model):
     if hasattr(model, "_orig_mod"):
         return model._orig_mod
     return model
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write `text` to `path` atomically (tmp file + rename)."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
 
 
 class Callback:
@@ -77,9 +98,9 @@ class Callback:
 
 
 class CallbackRunner:
-    """Executes callbacks in ordered sequence and manages collective callback states."""
+    """Executes callbacks in ordered sequence and manages collective states."""
 
-    def __init__(self, callbacks: list[Callback]):
+    def __init__(self, callbacks: list):
         self.callbacks = callbacks or []
 
     def on_train_begin(self, trainer):
@@ -155,8 +176,8 @@ class EarlyStoppingCallback(Callback):
             self.patience_counter += 1
             if self.patience_counter >= self.patience:
                 print(
-                    f"\n ⏹ Early stopping triggered!",
-                    f"No improvement in '{self.monitor}' for {self.patience} epochs.",
+                    f"\n ⏹ Early stopping triggered! "
+                    f"No improvement in '{self.monitor}' for {self.patience} epochs."
                 )
                 trainer.request_stop()
 
@@ -195,9 +216,7 @@ class CheckpointCallback(Callback):
         run_dir: Directory to save checkpoints.
         monitor: Metric name to watch for improvement.
         mode: 'max' (higher is better) or 'min' (lower is better).
-        state_dict_fn: Optional callable(model) -> state_dict. When provided,
-            best_model.pth contains only the result of this call. When None,
-            best_model.pth contains the full model state dict.
+        state_dict_fn: Optional callable(model) -> state_dict.
     """
 
     def __init__(
@@ -214,7 +233,6 @@ class CheckpointCallback(Callback):
         self.state_dict_fn = state_dict_fn
 
     def _build_checkpoint(self, trainer, epoch: int, logs: Dict[str, Any]) -> dict:
-        """Build a full resumable checkpoint dict from current trainer state."""
         raw_model = _unwrap_compile(trainer.model)
         return {
             "epoch": epoch + 1,
@@ -248,7 +266,6 @@ class CheckpointCallback(Callback):
             if self.mode == "max"
             else current_score < self.best_score
         )
-
         if improved:
             self.best_score = current_score
 
@@ -257,20 +274,13 @@ class CheckpointCallback(Callback):
         torch.save(checkpoint, self.run_dir / "checkpoint_last.pth")
 
         if improved:
-            # Full checkpoint at best metric for resumption
             torch.save(checkpoint, self.run_dir / "checkpoint_best.pth")
-
-            # Weights-only for inference (strips projection head for SSL if
-            # state_dict_fn was provided)
             if self.state_dict_fn is not None:
                 weights = self.state_dict_fn(_unwrap_compile(trainer.model))
             else:
                 weights = _unwrap_compile(trainer.model).state_dict()
             torch.save(weights, self.run_dir / "best_model.pth")
-
-            print(
-                f"    ✓ Saved new best model " f"({self.monitor}: {current_score:.4f})"
-            )
+            print(f"    ✓ Saved new best model ({self.monitor}: {current_score:.4f})")
 
     def state_dict(self) -> Dict[str, Any]:
         return {"best_score": self.best_score}
@@ -280,40 +290,111 @@ class CheckpointCallback(Callback):
 
 
 # =====================================================================
-# 3. JSON Logger Callback
+# 3. JSON Logger - Single source of truth
 # =====================================================================
 class JSONLoggerCallback(Callback):
+    """
+    Source of truth: training_metrics.json
+
+    - Persists one record per epoch, deduped by `epoch`.
+    - Enriches each record with `global_epoch` (monotonic across resumes).
+    - Appends every write to training_metrics.archive.jsonl for audit.
+    - Atomic JSON write (tmp + rename); on corruption, rebuilds from archive.
+    - Intentionally does NOT implement state_dict/load_state_dict: history
+      lives on disk, so it survives resume regardless of checkpoint state.
+    - Does NOT mutate the shared `logs` dict passed to other callbacks.
+      BaseTrainer owns `epoch`, `attempt`, `run_id`; this callback owns
+      `global_epoch` (derived from persisted history).
+    """
+
     def __init__(self, run_dir: Path):
         self.json_path = Path(run_dir) / "training_metrics.json"
-        self.history = []
+        self.archive_path = Path(run_dir) / "training_metrics.archive.jsonl"
+        self.history: List[Dict[str, Any]] = []
+        self._epoch_index: Dict[int, int] = {}
+        self._load_from_disk()
+
+    def _load_from_disk(self):
         if self.json_path.exists():
-            with open(self.json_path, "r") as f:
-                self.history = json.load(f)
+            try:
+                self.history = json.loads(self.json_path.read_text())
+                self._rebuild_index()
+                return
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning(
+                    f"Failed to parse {self.json_path}: {e}; "
+                    f"rebuilding from {self.archive_path}"
+                )
+        if self.archive_path.exists():
+            by_epoch: Dict[int, Dict[str, Any]] = {}
+            for line in self.archive_path.read_text().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if "epoch" in rec:
+                    by_epoch[rec["epoch"]] = rec  # last-write-wins
+            self.history = sorted(by_epoch.values(), key=lambda r: r["epoch"])
+            self._rebuild_index()
+
+    def _rebuild_index(self):
+        self._epoch_index = {
+            h["epoch"]: i
+            for i, h in enumerate(self.history)
+            if h.get("epoch") is not None
+        }
 
     def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
-        self.history.append(logs)
-        with open(self.json_path, "w") as f:
-            json.dump(self.history, f, indent=2)
+        epoch_key = epoch + 1  # authoritative; do not trust logs["epoch"]
+
+        if epoch_key in self._epoch_index:
+            idx = self._epoch_index[epoch_key]
+            global_epoch = self.history[idx].get("global_epoch", epoch_key)
+            record = {**logs, "epoch": epoch_key, "global_epoch": global_epoch}
+            self.history[idx] = record
+        else:
+            global_epoch = (
+                max((h.get("global_epoch", 0) for h in self.history), default=0) + 1
+            )
+            record = {**logs, "epoch": epoch_key, "global_epoch": global_epoch}
+            self.history.append(record)
+            self._epoch_index[epoch_key] = len(self.history) - 1
+
+        _atomic_write_text(self.json_path, json.dumps(self.history, indent=2))
+
+        with open(self.archive_path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+
+    def export_csv(self, csv_path: Optional[Path] = None) -> None:
+        """On-demand CSV export. Source of truth remains the JSON file."""
+        csv_path = (
+            Path(csv_path) if csv_path else self.json_path.parent / "training_log.csv"
+        )
+        if not self.history:
+            logger.info("export_csv: empty history, nothing to export")
+            return
+        fixed = ["epoch", "global_epoch", "attempt", "run_id"]
+        other_keys = sorted(
+            {k for h in self.history for k in h.keys() if k not in fixed}
+        )
+        fieldnames = [
+            f for f in fixed if any(f in h for h in self.history)
+        ] + other_keys
+
+        tmp = csv_path.with_suffix(csv_path.suffix + ".tmp")
+        with open(tmp, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(self.history)
+        os.replace(tmp, csv_path)
+        logger.info(f"CSV exported to {csv_path}")
 
 
 # =====================================================================
-# 4. CSV Logger Callback
-# =====================================================================
-class CSVLoggerCallback(Callback):
-    def __init__(self, run_dir: Path):
-        self.csv_path = Path(run_dir) / "training_log.csv"
-
-    def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
-        file_exists = self.csv_path.exists()
-        with open(self.csv_path, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=logs.keys())
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow(logs)
-
-
-# =====================================================================
-# 5. WandB Logger Callback
+# 4. WandB Logger Callback
 # =====================================================================
 class WandBLoggerCallback(Callback):
     def __init__(self, config: Dict[str, Any], run_dir: Path, max_failures: int = 3):
@@ -327,13 +408,11 @@ class WandBLoggerCallback(Callback):
         self._wandb_initialized = False
 
     def _disable(self, reason: str):
-        """Disable further W&B logging after repeated failures."""
         if self.enabled:
             logger.warning(f"WandB logging disabled: {reason}")
             self.enabled = False
 
     def _handle_error(self, context: str, exc: Exception):
-        """Handle a wandb error: log warning and maybe disable the callback."""
         self._failure_count += 1
         logger.warning(
             f"WandB error during {context}: {exc}. "
@@ -357,7 +436,7 @@ class WandBLoggerCallback(Callback):
             )
             wandb.watch(trainer.model, log="gradients", log_freq=100)
             self._wandb_initialized = True
-            self._failure_count = 0  # reset on success
+            self._failure_count = 0
         except Exception as e:
             self._handle_error("initialization", e)
             self._wandb_initialized = False
@@ -365,9 +444,13 @@ class WandBLoggerCallback(Callback):
     def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
         if not self.enabled or not self._wandb_initialized:
             return
+        # `wandb.log(..., step=epoch)` already carries the epoch on the
+        # step axis; `attempt` / `run_id` are metadata, not metrics.
+        strip = _EPOCH_META_KEYS - {"global_epoch"}
+        metrics = {k: v for k, v in logs.items() if k not in strip}
         try:
-            wandb.log(logs, step=epoch)
-            self._failure_count = 0  # reset on success
+            wandb.log(metrics, step=epoch)
+            self._failure_count = 0
         except Exception as e:
             self._handle_error("log", e)
 
@@ -399,7 +482,6 @@ class WandBLoggerCallback(Callback):
             wandb.finish()
         except Exception as e:
             self._handle_error("finalization", e)
-            # Even if finish fails, try to avoid leaving a hung process
             try:
                 wandb.finish(exit_code=1)
             except Exception:
@@ -407,14 +489,17 @@ class WandBLoggerCallback(Callback):
 
 
 # =====================================================================
-# 6. Plot Metrics Callback
+# 5. Plot Metrics Callback
 # =====================================================================
 class PlotMetricsCallback(Callback):
     """
-    Plots training metrics across epochs.
+    Plots numeric training metrics across epochs.
 
-    Saves plots after each epoch (overwrites same file).
-    Automatically selects numeric metrics from logs.
+    - Dedupes history by `epoch` so resumed runs don't double-plot.
+    - Auto-selects numeric metrics from logs, excluding epoch-meta keys and
+      known non-metric fields (learning rate, timings, etc.).
+    - Uses `epoch` (local) for the x-axis. For a cross-resume view, use
+      `global_epoch` from training_metrics.json directly.
     """
 
     def __init__(
@@ -429,7 +514,14 @@ class PlotMetricsCallback(Callback):
         self.figsize = figsize
 
     def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
-        self.history.append(logs.copy())
+        record = logs.copy()
+        record["epoch"] = epoch + 1  # authoritative
+        for i, h in enumerate(self.history):
+            if h.get("epoch") == record["epoch"]:
+                self.history[i] = record
+                break
+        else:
+            self.history.append(record)
         self._plot()
 
     def on_train_end(self, trainer):
@@ -440,8 +532,7 @@ class PlotMetricsCallback(Callback):
             return
 
         if self.metrics is None:
-            excluded = {
-                "epoch",
+            excluded = _EPOCH_META_KEYS | {
                 "learning_rate",
                 "grad_norm",
                 "epoch_time_sec",
@@ -462,7 +553,9 @@ class PlotMetricsCallback(Callback):
 
         num_metrics = len(metrics)
         fig, axes = plt.subplots(
-            1, num_metrics, figsize=(self.figsize[0] * num_metrics, self.figsize[1])
+            1,
+            num_metrics,
+            figsize=(self.figsize[0] * num_metrics, self.figsize[1]),
         )
         if num_metrics == 1:
             axes = [axes]
@@ -499,3 +592,39 @@ class PlotMetricsCallback(Callback):
     def load_state_dict(self, state_dict: Dict[str, Any]):
         self.history = state_dict.get("history", [])
         self._plot()
+
+
+# =====================================================================
+# 6. Auto-Report Callback
+# =====================================================================
+class AutoReportCallback(Callback):
+    """
+    Runs the deterministic training-log analyst at end of training.
+
+    Failures here must not fail an otherwise-successful training run, so
+    any exception is logged and swallowed. Imports are lazy to keep
+    callbacks.py independent of tools.mlops at module load time.
+    """
+
+    def on_train_end(self, trainer):
+        try:
+            from tools.mlops.log_analyst import TrainingLogAnalyst
+
+            report = TrainingLogAnalyst(trainer.run_dir).analyze()
+
+            if trainer.config.get("reporting", {}).get("llm", {}).get("enabled", False):
+                from tools.mlops.llm_analyst import enrich_report
+
+                report = enrich_report(
+                    report, trainer.config, trainer.run_dir / ".llm_cache"
+                )
+                (trainer.run_dir / "report.json").write_text(
+                    json.dumps(report, indent=2)
+                )
+
+                # Re-render md with llm banner
+                md = TrainingLogAnalyst(trainer.run_dir)._render_markdown(report)
+                (trainer.run_dir / "report.md").write_text(md)
+
+        except Exception as e:
+            logger.warning(f"Auto-report failed: {e}", exc_info=True)
