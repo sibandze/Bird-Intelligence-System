@@ -144,7 +144,9 @@ class ExperimentManager:
                         )
                         requested_classes = new_num_classes
 
-                selected_classes = eligible_classes.index[:requested_classes].tolist()
+                selected_classes = sorted(
+                    eligible_classes.index[:requested_classes].tolist()
+                )
                 print(
                     f"   Selected {len(selected_classes)} classes with {requested_samples} samples each"
                 )
