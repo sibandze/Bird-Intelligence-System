@@ -1,10 +1,10 @@
 # src/trainers/base_trainer.py
 
+import random
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-import random
 
 import numpy as np
 import torch
@@ -39,6 +39,19 @@ class BaseTrainer(ABC):
     _post_train             – post-training work (e.g. test evaluation) → result dict
     _print_train_init       – startup banner
     _print_epoch_summary    – one-line per-epoch log
+
+    Epoch-metadata contract (see callbacks.py)
+    ------------------------------------------
+    BaseTrainer is responsible for placing these fields into the ``logs``
+    dict that is dispatched to callbacks at the end of each epoch:
+
+        "epoch"    : 1-indexed local epoch
+        "attempt"  : resume attempt counter (0 = fresh run, 1 = resumed once, …)
+        "run_id"   : stable identifier (run_dir.name)
+
+    ``JSONLoggerCallback`` additionally persists ``global_epoch`` derived
+    from its own on-disk history. Other callbacks must not treat these as
+    numeric metrics (PlotMetricsCallback excludes them automatically).
     """
 
     _weight_decay_default: float = 1e-4
@@ -86,9 +99,13 @@ class BaseTrainer(ABC):
 
         self.best_metric_value = float("inf") if self.best_mode == "min" else 0.0
         self.best_epoch = 0
+
+        # ── trainer_state (contract for callbacks & mlops) ──────────────
         self.trainer_state: Dict[str, Any] = {
             "best_metric": self.best_metric_value,
             "best_epoch": self.best_epoch,
+            "attempt": 0,  # resume attempt counter
+            "run_id": self.run_dir.name,  # stable run identifier
         }
         self.stop_training = False
 
@@ -107,6 +124,9 @@ class BaseTrainer(ABC):
 
     def train(self, df) -> Dict[str, Any]:
         """Main training loop — template method calling subclass hooks."""
+        # 0. Seed for reproducible model init / data splits
+        self._set_seed()
+
         # 1. Data
         self.get_dataloaders(df)
 
@@ -118,7 +138,8 @@ class BaseTrainer(ABC):
         self._setup_optimizer()
         self._setup_scheduler()
 
-        # 4. Resume
+        # 4. Resume (loads model / optimizer / scheduler / RNG / callback
+        #    state, and increments trainer_state["attempt"])
         resume_epoch = self._resume_checkpoint()
 
         # 5. Pre-train hook (compile, save label maps, …)
@@ -136,7 +157,9 @@ class BaseTrainer(ABC):
             if self.stop_training:
                 break
 
-            self.train_loader.dataset.set_epoch(epoch)
+            if hasattr(self.train_loader.dataset, "set_epoch"):
+                self.train_loader.dataset.set_epoch(epoch)
+
             self.cb_runner.on_epoch_begin(self, epoch)
             epoch_start = time.time()
 
@@ -153,8 +176,18 @@ class BaseTrainer(ABC):
             self._print_epoch_summary(logs)
             self.cb_runner.on_epoch_end(self, epoch, logs)
 
-        # 8. Post-train & cleanup
+        # 8. Post-train (test evaluation), then on_train_end
+        #
+        # `_post_train` returns the final result dict. We stash it on the
+        # trainer and in trainer_state BEFORE dispatching on_train_end so
+        # that reporting / registry callbacks can read it. The actual
+        # MLops actions live in `on_train_end` (reporting) or in the
+        # external orchestrator (registry promotion, hparam advising) —
+        # never in the trainer itself.
         results = self._post_train()
+        self.results = results
+        self.trainer_state["test_results"] = results
+
         self.cb_runner.on_train_end(self)
         return results
 
@@ -169,7 +202,7 @@ class BaseTrainer(ABC):
 
     @abstractmethod
     def get_dataloaders(self, df):
-        """Build data loaders.  Must set at least self.train_loader and
+        """Build data loaders. Must set at least self.train_loader and
         self.val_loader."""
         ...
 
@@ -209,28 +242,22 @@ class BaseTrainer(ABC):
 
     def _on_pre_train(self):
         """Called after model/scheduler/checkpoint setup, before the epoch
-        loop.  Use for compilation, saving label maps, etc."""
-
-    def _restore_best_from_state(self, state: Dict):
-        """Hook for subclasses to restore additional best-tracking keys
-        from a checkpoint's trainer_state dict (e.g. legacy key names).
-
-        The default implementation handles the common case of loading
-        old checkpoints that stored ``best_val_acc`` or ``best_loss``
-        instead of the current ``best_metric`` key."""
+        loop. Use for compilation, saving label maps, writing run manifests,
+        etc."""
 
     def _post_train(self) -> Dict[str, Any]:
-        """Post-training work (e.g. test evaluation).  Returns the final
+        """Post-training work (e.g. test evaluation). Returns the final
         result dict that ``train()`` will return."""
         return {}
 
     def _print_train_init(self):
-        """Startup banner.  Override to append subclass-specific info."""
+        """Startup banner. Override to append subclass-specific info."""
         num_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(
             p.numel() for p in self.model.parameters() if p.requires_grad
         )
         print(f"\n>>> Initializing {self.__class__.__name__}:")
+        print(f"    Run:       {self.run_dir}")
         print(f"    Device:    {self.device}")
         print(f"    Precision: {self.precision.precision_name()}")
         print(f"    Params:    {num_params:,} (Trainable: {trainable_params:,})")
@@ -239,11 +266,12 @@ class BaseTrainer(ABC):
             print(f"    Val samples:   {len(self.val_loader.dataset)}")
 
     def _print_epoch_summary(self, logs: Dict[str, Any]):
-        """One-line epoch log.  Override for custom formatting."""
+        """One-line epoch log. Override for custom formatting."""
         print(
             f"Epoch {logs['epoch']}/{self.config['training']['epochs']} | "
             f"{logs['epoch_time_sec']:.1f}s | "
             f"Train Loss: {logs.get('train_loss', 0):.4f} | "
+            f"Train Acc: {logs.get('train_acc', 0):.4f} | "
             f"Val Loss: {logs.get('val_loss', 0):.4f} | "
             f"Best: {self.best_metric_value:.4f} (ep {self.best_epoch})"
         )
@@ -251,6 +279,19 @@ class BaseTrainer(ABC):
     # ==================================================================
     # Shared infrastructure
     # ==================================================================
+
+    def _set_seed(self):
+        """Apply ``config['experiment']['seed']`` to all RNGs. Safe to
+        call on resume — the checkpoint will overwrite RNG state in
+        ``_resume_checkpoint``."""
+        seed = self.config.get("experiment", {}).get("seed")
+        if seed is None:
+            return
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
     def _get_augmentation_config(self) -> Dict:
         """Extract spec-augmentation configuration."""
@@ -291,8 +332,15 @@ class BaseTrainer(ABC):
         self._scheduler_step_freq = get_scheduler_step_frequency(scheduler_type)
 
     def _resume_checkpoint(self) -> int:
-        """Resume from ``checkpoint_last.pth`` if present.  Returns the
-        start epoch (0 when no checkpoint is found)."""
+        """Resume from ``checkpoint_last.pth`` if present. Returns the
+        index of the first epoch to run (0 when no checkpoint found).
+
+        Side effects:
+            - loads model / optimizer / scheduler / precision / callback
+              state and RNG state from the checkpoint
+            - restores ``trainer_state`` and best-metric tracking
+            - increments ``trainer_state['attempt']``
+        """
         path = self.run_dir / "checkpoint_last.pth"
         if not path.exists():
             return 0
@@ -319,22 +367,30 @@ class BaseTrainer(ABC):
         if ckpt.get("python_rng_state") is not None:
             random.setstate(ckpt["python_rng_state"])
 
-        # ── Trainer state ───────────────────────────────────────────────
+        # ── Trainer state (best metric / epoch / attempt / run_id) ──────
         if "trainer_state" in ckpt:
             self.trainer_state.update(ckpt["trainer_state"])
             self.best_metric_value = self.trainer_state.get(
                 "best_metric", self.best_metric_value
             )
             self.best_epoch = self.trainer_state.get("best_epoch", self.best_epoch)
-            # Subclass hook for legacy key migration (best_val_acc → best_metric, etc.)
-            self._restore_best_from_state(self.trainer_state)
+
+        # Increment attempt counter — this is the number of successful
+        # resumptions from a persisted checkpoint. Attempts that crash
+        # before the first checkpoint write after resume don't count,
+        # which matches "resume attempts from this state".
+        self.trainer_state["attempt"] = self.trainer_state.get("attempt", 0) + 1
 
         resume_epoch = ckpt["epoch"]
-        print(f"    ✓ Resumed from epoch {resume_epoch + 1}")
+        print(
+            f"    ✓ Resumed after {resume_epoch} epoch(s) — "
+            f"starting epoch {resume_epoch + 1} "
+            f"(attempt {self.trainer_state['attempt']})"
+        )
         return resume_epoch
 
     def _backward_and_step(self, loss: torch.Tensor) -> float:
-        """Shared backward → clip → step → update.  Returns grad norm."""
+        """Shared backward → clip → step. Returns grad norm."""
         self.precision.scale_loss(loss).backward()
         self.precision.unscale_gradients(self.optimizer)
 
@@ -344,20 +400,22 @@ class BaseTrainer(ABC):
             max_norm=grad_clip if grad_clip is not None else float("inf"),
         ).item()
 
-        self.precision.step(self.optimizer)
-        self.precision.update()
+        # step() folds in scaler.update() and reports whether the
+        # optimizer actually stepped (False on FP16 non-finite grads).
+        stepped = self.precision.step(self.optimizer)
 
-        if self.scheduler and self._scheduler_step_freq == "batch":
+        # Only advance a batch-level scheduler on an applied step —
+        # otherwise the LR schedule drifts ahead of the optimizer.
+        if stepped and self.scheduler and self._scheduler_step_freq == "batch":
             self.scheduler.step()
 
         return grad_norm
 
     def _update_best(self, val_metrics: Dict[str, float], epoch: int) -> bool:
-        """Update best-metric tracking.  Writes both the generic
+        """Update best-metric tracking. Writes both the generic
         ``best_metric`` key and the monitor-specific key (e.g.
-        ``best_val_acc``) into ``trainer_state`` for backward
-        compatibility with callbacks and external tools.  Returns
-        True if the metric improved."""
+        ``best_val_acc``) into ``trainer_state`` for backward compatibility
+        with callbacks and external tools. Returns True if improved."""
         current = val_metrics.get(self.best_monitor)
         if current is None:
             return False
@@ -368,10 +426,8 @@ class BaseTrainer(ABC):
         if improved:
             self.best_metric_value = current
             self.best_epoch = epoch + 1
-            # Generic key
             self.trainer_state["best_metric"] = self.best_metric_value
             self.trainer_state["best_epoch"] = self.best_epoch
-            # Monitor-specific key for backward compatibility
             self.trainer_state[self.best_monitor] = self.best_metric_value
         return improved
 
@@ -391,12 +447,16 @@ class BaseTrainer(ABC):
         val_metrics: Dict[str, float],
         epoch_duration: float,
     ) -> Dict[str, Any]:
-        """Merge subclass metrics with common metadata.
+        """Merge subclass metrics with common metadata + the epoch-meta
+        contract (``epoch``, ``attempt``, ``run_id``).
 
         Automatically computes ``samples_per_sec`` when
         ``train_metrics`` includes ``train_total``."""
         logs: Dict[str, Any] = {
             "epoch": epoch + 1,
+            "attempt": self.trainer_state["attempt"],
+            "run_id": self.trainer_state["run_id"],
+            "objective": self.trainer_state.get("objective", "unknown"),
             "learning_rate": self.optimizer.param_groups[0]["lr"],
             "epoch_time_sec": epoch_duration,
             "best_metric": self.best_metric_value,
