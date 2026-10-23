@@ -15,7 +15,9 @@ from .precision import PrecisionManager
 from .scheduler import create_scheduler, get_scheduler_step_frequency
 from src.utils.memory_utils import get_gpu_memory_info
 from .callbacks import Callback, CallbackRunner
+import logging
 
+logger = logging.getLogger(__name__)
 
 class BaseTrainer(ABC):
     """
@@ -97,15 +99,26 @@ class BaseTrainer(ABC):
         if not hasattr(self, "best_mode"):
             self.best_mode = "min"
 
-        self.best_metric_value = float("inf") if self.best_mode == "min" else 0.0
-        self.best_epoch = 0
+        if self.best_mode not in {"min", "max"}:
+            raise ValueError(
+                f"best_mode must be 'min' or 'max', got {self.best_mode!r}"
+            )
+        if not isinstance(self.best_monitor, str) or not self.best_monitor.strip():
+            raise ValueError(
+                f"best_monitor must be a non-empty string, got {self.best_monitor!r}"
+            )
+
+        # Distinct "no best yet" state - replaces inf/0.0
+        self.best_metric_value: Optional[float] = None
+        self.best_epoch: Optional[int] = None
+        self._has_best: bool = False
 
         # ── trainer_state (contract for callbacks & mlops) ──────────────
         self.trainer_state: Dict[str, Any] = {
-            "best_metric": self.best_metric_value,
-            "best_epoch": self.best_epoch,
-            "attempt": 0,  # resume attempt counter
-            "run_id": self.run_dir.name,  # stable run identifier
+            "best_metric": self.best_metric_value, # None = no valid best yet
+            "best_epoch": self.best_epoch,         # None = no valid best yet
+            "attempt": 0,                          # resume attempt counter
+            "run_id": self.run_dir.name,           # stable run identifier
         }
         self.stop_training = False
 
@@ -163,6 +176,7 @@ class BaseTrainer(ABC):
             self.cb_runner.on_epoch_begin(self, epoch)
             epoch_start = time.time()
 
+            learning_rate_this_epoch = self.optimizer.param_groups[0]["lr"]
             train_metrics = self._train_epoch(epoch)
             val_metrics = self._validate_epoch(epoch)
             self._update_best(val_metrics, epoch)
@@ -172,7 +186,7 @@ class BaseTrainer(ABC):
             self._last_val_metrics = val_metrics
 
             epoch_duration = time.time() - epoch_start
-            logs = self._build_logs(epoch, train_metrics, val_metrics, epoch_duration)
+            logs = self._build_logs(epoch, train_metrics, val_metrics, epoch_duration, learning_rate_this_epoch)
             self._print_epoch_summary(logs)
             self.cb_runner.on_epoch_end(self, epoch, logs)
 
@@ -231,8 +245,11 @@ class BaseTrainer(ABC):
         """
         Run one validation epoch.
 
-        Returns a dict with validation metrics (e.g. ``val_loss``, ``val_acc``).
-        Return zeros / empty dict if no validation data is available.
+        Returns a dict with validation metrics (e.g. ``val_loss``, ``val_acc``)
+        when validation data is available.
+
+        Returns an empty dict when validation data is unavailable. Do not
+        synthesize zero-valued metrics for missing validation data.
         """
         ...
 
@@ -267,14 +284,52 @@ class BaseTrainer(ABC):
 
     def _print_epoch_summary(self, logs: Dict[str, Any]):
         """One-line epoch log. Override for custom formatting."""
-        print(
-            f"Epoch {logs['epoch']}/{self.config['training']['epochs']} | "
-            f"{logs['epoch_time_sec']:.1f}s | "
-            f"Train Loss: {logs.get('train_loss', 0):.4f} | "
-            f"Train Acc: {logs.get('train_acc', 0):.4f} | "
-            f"Val Loss: {logs.get('val_loss', 0):.4f} | "
-            f"Best: {self.best_metric_value:.4f} (ep {self.best_epoch})"
-        )
+        def _fmt(v, fmt=".4f"):
+            if v is None:
+                return "N/A"
+            try:
+                fv = float(v)
+                if not np.isfinite(fv):
+                    return "N/A"
+                return format(fv, fmt)
+            except (TypeError, ValueError):
+                return str(v)
+
+        best_str = f"{self.best_metric_value:.4f} (ep {self.best_epoch})" \
+                   if self._has_best else "None (no best yet)"
+
+        # Support both supervised and SSL metrics, handle missing
+        train_loss = _fmt(logs.get("train_loss"))
+        train_acc = logs.get("train_acc")
+        val_loss = _fmt(logs.get("val_loss"))
+        val_acc = logs.get("val_acc")
+        val_win_acc = logs.get("val_window_acc")
+        val_cont_acc = logs.get("val_contrastive_acc")
+
+        parts = [
+            f"Epoch {logs['epoch']}/{self.config['training']['epochs']}",
+            f"{logs['epoch_time_sec']:.1f}s",
+            f"Train Loss: {train_loss}",
+        ]
+        if train_acc is not None:
+            parts.append(f"Train Acc: {_fmt(train_acc)}")
+        if "val_loss" in logs:
+            parts.append(f"Val Loss: {val_loss}")
+        if val_acc is not None:
+            parts.append(f"Val Acc: {_fmt(val_acc)}")
+        if val_win_acc is not None:
+            parts.append(f"Val Win Acc: {_fmt(val_win_acc)}")
+        if val_cont_acc is not None:
+            parts.append(f"Val Cont Acc: {_fmt(val_cont_acc)}")
+
+        # If no val metrics at all
+        if not any(k in logs for k in ("val_loss", "val_acc", "val_window_acc", "val_contrastive_acc")):
+            parts.append("Val: N/A")
+
+        parts.append(f"Best: {best_str}")
+        parts.append(f"LR: {_fmt(logs.get('learning_rate_this_epoch'), '.2e')}")
+
+        print(" | ".join(parts))
 
     # ==================================================================
     # Shared infrastructure
@@ -320,7 +375,27 @@ class BaseTrainer(ABC):
         epochs = self.config["training"]["epochs"]
         scheduler_type = self.config["training"].get("scheduler_type", "cosine")
         warmup_steps = self.config["training"].get("warmup_steps", 0)
-        total_steps = max(len(self.train_loader) * epochs, warmup_steps * 2)
+        steps_per_epoch = len(self.train_loader)
+
+        if isinstance(epochs, bool) or not isinstance(epochs, int) or epochs <= 0:
+            raise ValueError("training.epochs must be a positive integer")
+
+        if steps_per_epoch <= 0:
+            raise ValueError(
+                "Training DataLoader must contain at least one batch"
+            )
+
+        if warmup_steps < 0:
+            raise ValueError("warmup_steps must be >= 0")
+
+        total_steps = steps_per_epoch * epochs
+
+        if warmup_steps >= total_steps:
+            raise ValueError(
+                f"warmup_steps ({warmup_steps}) must be less than "
+                f"total_steps ({total_steps}); "
+                f"steps_per_epoch={steps_per_epoch}, epochs={epochs}"
+            )
 
         self.scheduler = create_scheduler(
             optimizer=self.optimizer,
@@ -370,10 +445,10 @@ class BaseTrainer(ABC):
         # ── Trainer state (best metric / epoch / attempt / run_id) ──────
         if "trainer_state" in ckpt:
             self.trainer_state.update(ckpt["trainer_state"])
-            self.best_metric_value = self.trainer_state.get(
-                "best_metric", self.best_metric_value
-            )
-            self.best_epoch = self.trainer_state.get("best_epoch", self.best_epoch)
+            # Restore None-aware
+            self.best_metric_value = self.trainer_state.get("best_metric")
+            self.best_epoch = self.trainer_state.get("best_epoch")
+            self._has_best = self.best_metric_value is not None and self.best_epoch is not None
 
         # Increment attempt counter — this is the number of successful
         # resumptions from a persisted checkpoint. Attempts that crash
@@ -419,13 +494,25 @@ class BaseTrainer(ABC):
         current = val_metrics.get(self.best_monitor)
         if current is None:
             return False
+        # Guard against non-finite monitor
+        try:
+            c = float(current)
+            if not np.isfinite(c):
+                return False
+        except (TypeError, ValueError):
+            return False
 
-        improved = (self.best_mode == "min" and current < self.best_metric_value) or (
-            self.best_mode == "max" and current > self.best_metric_value
-        )
+        # First real improvement - assign unconditionally
+        if not self._has_best:
+            improved = True
+        else:
+            improved = (self.best_mode == "min" and c < self.best_metric_value) or \
+                       (self.best_mode == "max" and c > self.best_metric_value)
+
         if improved:
-            self.best_metric_value = current
+            self.best_metric_value = c
             self.best_epoch = epoch + 1
+            self._has_best = True
             self.trainer_state["best_metric"] = self.best_metric_value
             self.trainer_state["best_epoch"] = self.best_epoch
             self.trainer_state[self.best_monitor] = self.best_metric_value
@@ -436,7 +523,32 @@ class BaseTrainer(ABC):
         if not self.scheduler or self._scheduler_step_freq != "epoch":
             return
         if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-            self.scheduler.step(val_metrics.get("val_loss", 0.0))
+            monitor = self.best_monitor
+            monitor_val = val_metrics.get(monitor)
+            if monitor_val is None:
+                logger.warning(
+                    "ReduceLROnPlateau: monitor %r missing; skipping step",
+                    monitor,
+                )
+                return
+            try:
+                v = float(monitor_val)
+                if not np.isfinite(v):
+                    logger.warning(
+                        "ReduceLROnPlateau: non-finite %r=%r, skipping",
+                        monitor,
+                        monitor_val,
+                    )
+                    return
+            except (TypeError, ValueError) as e:
+                logger.warning(
+                    "ReduceLROnPlateau: monitor %r conversion failed (%s=%r); skipping step",
+                    monitor,
+                    type(e).__name__,
+                    monitor_val,
+                )
+                return
+            self.scheduler.step(v)
         else:
             self.scheduler.step()
 
@@ -446,26 +558,30 @@ class BaseTrainer(ABC):
         train_metrics: Dict[str, float],
         val_metrics: Dict[str, float],
         epoch_duration: float,
+        learning_rate_this_epoch: float,
     ) -> Dict[str, Any]:
         """Merge subclass metrics with common metadata + the epoch-meta
-        contract (``epoch``, ``attempt``, ``run_id``).
+        contract. Authoritative fields are written LAST so they cannot
+        be overwritten by metrics."""
+        # 1. Start with metrics (may contain train_loss etc)
+        logs: Dict[str, Any] = {}
+        logs.update(train_metrics)
+        logs.update(val_metrics)
 
-        Automatically computes ``samples_per_sec`` when
-        ``train_metrics`` includes ``train_total``."""
-        logs: Dict[str, Any] = {
+        # 2. Authoritative metadata - wins over metrics
+        logs.update({
             "epoch": epoch + 1,
             "attempt": self.trainer_state["attempt"],
             "run_id": self.trainer_state["run_id"],
             "objective": self.trainer_state.get("objective", "unknown"),
-            "learning_rate": self.optimizer.param_groups[0]["lr"],
+            "learning_rate_this_epoch": learning_rate_this_epoch,
+            "learning_rate_next": self.optimizer.param_groups[0]["lr"],
             "epoch_time_sec": epoch_duration,
             "best_metric": self.best_metric_value,
             "best_epoch": self.best_epoch,
-        }
-        logs.update(train_metrics)
-        logs.update(val_metrics)
+        })
 
-        # Auto-compute throughput when subclass provides total sample count
+        # Auto-compute throughput
         train_total = train_metrics.get("train_total", 0)
         if train_total > 0:
             logs["samples_per_sec"] = train_total / max(epoch_duration, 1e-9)
