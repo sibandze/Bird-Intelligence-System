@@ -1,4 +1,4 @@
-# src/trainers/ssl_simclr_train.py
+# src/trainers/ssl_simclr_trainer.py
 
 from typing import Dict, Any, List
 
@@ -17,9 +17,9 @@ from .callbacks import (
     CheckpointCallback,
     EarlyStoppingCallback,
     JSONLoggerCallback,
-    CSVLoggerCallback,
     WandBLoggerCallback,
     PlotMetricsCallback,
+    AutoReportCallback,
 )
 
 
@@ -34,34 +34,29 @@ class SimCLRExperimentTrainer(BaseTrainer):
         self.best_monitor = "val_loss"
         self.best_mode = "min"
         super().__init__(config, run_dir, callbacks)
+        self.trainer_state["objective"] = "simclr"
 
     # ── callbacks ───────────────────────────────────────────────────────
     def _get_default_callbacks(self) -> List[Callback]:
         return [
             EarlyStoppingCallback(
-                monitor="val_loss",
-                mode="min",
+                monitor=self.best_monitor,
+                mode=self.best_mode,
                 patience=self.config["training"].get("patience", 15),
             ),
             JSONLoggerCallback(self.run_dir),
-            CSVLoggerCallback(self.run_dir),
             PlotMetricsCallback(self.run_dir),
             CheckpointCallback(
                 run_dir=self.run_dir,
-                monitor="val_loss",
-                mode="min",
+                monitor=self.best_monitor,
+                mode=self.best_mode,
                 # Strip projection head — only the encoder is useful
                 # after pretraining.
                 state_dict_fn=lambda m: m.encoder.state_dict(),
             ),
+            AutoReportCallback(),
             WandBLoggerCallback(self.config, self.run_dir),
         ]
-
-    # ── legacy checkpoint compatibility ─────────────────────────────────
-    def _restore_best_from_state(self, state: Dict):
-        if "best_loss" in state and "best_metric" not in state:
-            self.best_metric_value = state["best_loss"]
-            state["best_metric"] = self.best_metric_value
 
     # ── data ────────────────────────────────────────────────────────────
     def get_dataloaders(self, df):
@@ -133,6 +128,9 @@ class SimCLRExperimentTrainer(BaseTrainer):
         print(f"    Temperature: {self.model.temperature}")
 
     def _print_epoch_summary(self, logs):
+        # SSL is monitored on val_loss (best_mode="min"); contrastive
+        # accuracy is reported alongside for interpretability but does
+        # not drive checkpointing.
         epochs = self.config["training"]["epochs"]
         print(
             f"Epoch {logs['epoch']}/{epochs} | "
@@ -178,7 +176,7 @@ class SimCLRExperimentTrainer(BaseTrainer):
 
             pbar.set_postfix(loss=loss.item(), acc=acc.item())
 
-        n = max(len(self.train_loader.dataset), 1)
+        n = max(total_samples, 1)
         return {
             "train_loss": loss_total / n,
             "train_contrastive_acc": acc_total / n,
@@ -192,6 +190,7 @@ class SimCLRExperimentTrainer(BaseTrainer):
         epochs = self.config["training"]["epochs"]
         loss_total = 0.0
         acc_total = 0.0
+        total_samples = 0
 
         with torch.no_grad():
             for x1, x2 in tqdm(
@@ -203,10 +202,12 @@ class SimCLRExperimentTrainer(BaseTrainer):
                 x2 = x2.to(self.device)
                 with self.precision.autocast():
                     loss, acc = self.model.training_step(x1, x2)
-                loss_total += loss.item() * x1.size(0)
-                acc_total += acc.item() * x1.size(0)
+                bs = x1.size(0)
+                loss_total += loss.item() * bs
+                acc_total += acc.item() * bs
+                total_samples += bs
 
-        n = max(len(self.val_loader.dataset), 1)
+        n = max(total_samples, 1)
         return {
             "val_loss": loss_total / n,
             "val_contrastive_acc": acc_total / n,
