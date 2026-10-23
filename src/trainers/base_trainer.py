@@ -423,6 +423,29 @@ class BaseTrainer(ABC):
         print(f"    ↻ Resuming from {path.name}")
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
 
+        # ── git provenance check ──────────────────────────────────────
+        ckpt_git = ckpt.get("git_commit")
+        curr_git = getattr(self, "git_hash", None)
+        if ckpt_git and curr_git and ckpt_git != curr_git:
+            logger.warning(
+                "Git hash mismatch on resume: checkpoint=%s current=%s. "
+                "Resuming across code changes can cause: "
+                "1) model architecture mismatch (missing/unexpected keys in state_dict), "
+                "2) optimizer/scheduler state incompatible with new param groups, "
+                "3) changed training logic / loss / augmentations leading to "
+                "non-reproducible metrics, "
+                "4) callback state (e.g. best_score) misaligned with new monitor. "
+                "Consider starting a fresh run if you changed model or training code.",
+                ckpt_git[:8], curr_git[:8],
+            )
+        elif ckpt_git is None and curr_git is not None:
+            logger.warning(
+                "Checkpoint has no git_commit (old checkpoint), current git=%s. "
+                "Cannot verify code compatibility on resume.",
+                curr_git[:8],
+            )
+        # ── end git check ─────────────────────────────────────────────
+
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         if self.scheduler and ckpt.get("scheduler_state_dict"):
