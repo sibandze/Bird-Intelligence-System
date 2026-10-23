@@ -13,7 +13,6 @@ from .base import Callback, _atomic_write_text
 
 logger = logging.getLogger(__name__)
 
-
 def _json_safe(value):
     """Recursively coerce non-finite floats to None so json.dumps(allow_nan=False) succeeds."""
     if isinstance(value, float):
@@ -21,6 +20,10 @@ def _json_safe(value):
     if isinstance(value, np.floating):
         fv = float(value)
         return fv if math.isfinite(fv) else None
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
     if isinstance(value, dict):
         return {k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
