@@ -1,7 +1,7 @@
-# src/trainers/supervised_transformer_train.py
+# src/trainers/supervised_transformer_trainer.py
 
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from collections import defaultdict
 
 import numpy as np
@@ -21,9 +21,9 @@ from .callbacks import (
     CheckpointCallback,
     EarlyStoppingCallback,
     JSONLoggerCallback,
-    CSVLoggerCallback,
     WandBLoggerCallback,
     PlotMetricsCallback,
+    AutoReportCallback,
     _unwrap_compile,
 )
 
@@ -59,8 +59,6 @@ def aggregate_recordings(logits_all, labels_all, recording_ids_all):
 
 
 # ── trainer ─────────────────────────────────────────────────────────────
-
-
 class SupervisedTransformerExperimentTrainer(BaseTrainer):
     """Supervised classification training engine with callback-driven
     architecture and recording-level evaluation."""
@@ -72,27 +70,24 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
         self.best_mode = "max"
         self.criterion = nn.CrossEntropyLoss()
         super().__init__(config, run_dir, callbacks)
+        self.trainer_state["objective"] = "supervised_transformer"
 
     # ── callbacks ───────────────────────────────────────────────────────
     def _get_default_callbacks(self) -> List[Callback]:
         return [
             EarlyStoppingCallback(
-                monitor="val_acc",
-                mode="max",
+                monitor=self.best_monitor,
+                mode=self.best_mode,
                 patience=self.config["training"].get("patience", 15),
             ),
             JSONLoggerCallback(self.run_dir),
-            CSVLoggerCallback(self.run_dir),
             PlotMetricsCallback(self.run_dir),
-            CheckpointCallback(self.run_dir, monitor="val_acc", mode="max"),
+            CheckpointCallback(
+                self.run_dir, monitor=self.best_monitor, mode=self.best_mode
+            ),
+            AutoReportCallback(),
             WandBLoggerCallback(self.config, self.run_dir),
         ]
-
-    # ── legacy checkpoint compatibility ─────────────────────────────────
-    def _restore_best_from_state(self, state: Dict):
-        if "best_val_acc" in state and "best_metric" not in state:
-            self.best_metric_value = state["best_val_acc"]
-            state["best_metric"] = self.best_metric_value
 
     # ── data ────────────────────────────────────────────────────────────
     def get_dataloaders(self, df: pd.DataFrame):
@@ -255,6 +250,9 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
         )
 
     def _print_epoch_summary(self, logs):
+        # Override only to add `Val Acc` — this is the monitored metric
+        # (best_monitor="val_acc"); the base format shows Train Acc but
+        # not Val Acc.
         epochs = self.config["training"]["epochs"]
         print(
             f"Epoch {logs['epoch']}/{epochs} | "
@@ -363,7 +361,7 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
             all_logits_t = torch.cat(all_logits, dim=0)
             all_labels_t = torch.cat(all_labels, dim=0)
 
-            rec_ids, rec_targets, rec_logits = aggregate_recordings(
+            _, rec_targets, rec_logits = aggregate_recordings(
                 all_logits_t, all_labels_t, all_rec_ids
             )
             rec_loss = self.criterion(
@@ -410,8 +408,8 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
         all_logits, all_labels, all_rec_ids = [], [], []
 
         with torch.no_grad():
-            for batch_idx, (mel_segments, labels, recording_ids) in enumerate(
-                tqdm(test_loader, desc="Evaluating", leave=False)
+            for mel_segments, labels, recording_ids in tqdm(
+                test_loader, desc="Evaluating", leave=False
             ):
                 mel_segments = mel_segments.to(self.device)
                 with self.precision.autocast():
@@ -424,7 +422,7 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
         all_logits = torch.cat(all_logits, dim=0)
         all_labels = torch.cat(all_labels, dim=0)
 
-        rec_ids, rec_targets, rec_logits = aggregate_recordings(
+        _, rec_targets, rec_logits = aggregate_recordings(
             all_logits, all_labels, all_rec_ids
         )
 
