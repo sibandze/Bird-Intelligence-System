@@ -19,6 +19,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class BaseTrainer(ABC):
     """
     Abstract base trainer implementing shared training infrastructure.
@@ -115,10 +116,10 @@ class BaseTrainer(ABC):
 
         # ── trainer_state (contract for callbacks & mlops) ──────────────
         self.trainer_state: Dict[str, Any] = {
-            "best_metric": self.best_metric_value, # None = no valid best yet
-            "best_epoch": self.best_epoch,         # None = no valid best yet
-            "attempt": 0,                          # resume attempt counter
-            "run_id": self.run_dir.name,           # stable run identifier
+            "best_metric": self.best_metric_value,  # None = no valid best yet
+            "best_epoch": self.best_epoch,  # None = no valid best yet
+            "attempt": 0,  # resume attempt counter
+            "run_id": self.run_dir.name,  # stable run identifier
         }
         self.stop_training = False
 
@@ -186,7 +187,13 @@ class BaseTrainer(ABC):
             self._last_val_metrics = val_metrics
 
             epoch_duration = time.time() - epoch_start
-            logs = self._build_logs(epoch, train_metrics, val_metrics, epoch_duration, learning_rate_this_epoch)
+            logs = self._build_logs(
+                epoch,
+                train_metrics,
+                val_metrics,
+                epoch_duration,
+                learning_rate_this_epoch,
+            )
             self._print_epoch_summary(logs)
             self.cb_runner.on_epoch_end(self, epoch, logs)
 
@@ -284,6 +291,7 @@ class BaseTrainer(ABC):
 
     def _print_epoch_summary(self, logs: Dict[str, Any]):
         """One-line epoch log. Override for custom formatting."""
+
         def _fmt(v, fmt=".4f"):
             if v is None:
                 return "N/A"
@@ -295,8 +303,11 @@ class BaseTrainer(ABC):
             except (TypeError, ValueError):
                 return str(v)
 
-        best_str = f"{self.best_metric_value:.4f} (ep {self.best_epoch})" \
-                   if self._has_best else "None (no best yet)"
+        best_str = (
+            f"{self.best_metric_value:.4f} (ep {self.best_epoch})"
+            if self._has_best
+            else "None (no best yet)"
+        )
 
         # Support both supervised and SSL metrics, handle missing
         train_loss = _fmt(logs.get("train_loss"))
@@ -323,7 +334,10 @@ class BaseTrainer(ABC):
             parts.append(f"Val Cont Acc: {_fmt(val_cont_acc)}")
 
         # If no val metrics at all
-        if not any(k in logs for k in ("val_loss", "val_acc", "val_window_acc", "val_contrastive_acc")):
+        if not any(
+            k in logs
+            for k in ("val_loss", "val_acc", "val_window_acc", "val_contrastive_acc")
+        ):
             parts.append("Val: N/A")
 
         parts.append(f"Best: {best_str}")
@@ -381,9 +395,7 @@ class BaseTrainer(ABC):
             raise ValueError("training.epochs must be a positive integer")
 
         if steps_per_epoch <= 0:
-            raise ValueError(
-                "Training DataLoader must contain at least one batch"
-            )
+            raise ValueError("Training DataLoader must contain at least one batch")
 
         if warmup_steps < 0:
             raise ValueError("warmup_steps must be >= 0")
@@ -436,7 +448,8 @@ class BaseTrainer(ABC):
                 "non-reproducible metrics, "
                 "4) callback state (e.g. best_score) misaligned with new monitor. "
                 "Consider starting a fresh run if you changed model or training code.",
-                ckpt_git[:8], curr_git[:8],
+                ckpt_git[:8],
+                curr_git[:8],
             )
         elif ckpt_git is None and curr_git is not None:
             logger.warning(
@@ -471,7 +484,9 @@ class BaseTrainer(ABC):
             # Restore None-aware
             self.best_metric_value = self.trainer_state.get("best_metric")
             self.best_epoch = self.trainer_state.get("best_epoch")
-            self._has_best = self.best_metric_value is not None and self.best_epoch is not None
+            self._has_best = (
+                self.best_metric_value is not None and self.best_epoch is not None
+            )
 
         # Increment attempt counter — this is the number of successful
         # resumptions from a persisted checkpoint. Attempts that crash
@@ -529,8 +544,9 @@ class BaseTrainer(ABC):
         if not self._has_best:
             improved = True
         else:
-            improved = (self.best_mode == "min" and c < self.best_metric_value) or \
-                       (self.best_mode == "max" and c > self.best_metric_value)
+            improved = (self.best_mode == "min" and c < self.best_metric_value) or (
+                self.best_mode == "max" and c > self.best_metric_value
+            )
 
         if improved:
             self.best_metric_value = c
@@ -592,17 +608,19 @@ class BaseTrainer(ABC):
         logs.update(val_metrics)
 
         # 2. Authoritative metadata - wins over metrics
-        logs.update({
-            "epoch": epoch + 1,
-            "attempt": self.trainer_state["attempt"],
-            "run_id": self.trainer_state["run_id"],
-            "objective": self.trainer_state.get("objective", "unknown"),
-            "learning_rate_this_epoch": learning_rate_this_epoch,
-            "learning_rate_next": self.optimizer.param_groups[0]["lr"],
-            "epoch_time_sec": epoch_duration,
-            "best_metric": self.best_metric_value,
-            "best_epoch": self.best_epoch,
-        })
+        logs.update(
+            {
+                "epoch": epoch + 1,
+                "attempt": self.trainer_state["attempt"],
+                "run_id": self.trainer_state["run_id"],
+                "objective": self.trainer_state.get("objective", "unknown"),
+                "learning_rate_this_epoch": learning_rate_this_epoch,
+                "learning_rate_next": self.optimizer.param_groups[0]["lr"],
+                "epoch_time_sec": epoch_duration,
+                "best_metric": self.best_metric_value,
+                "best_epoch": self.best_epoch,
+            }
+        )
 
         # Auto-compute throughput
         train_total = train_metrics.get("train_total", 0)
