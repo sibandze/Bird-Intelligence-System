@@ -13,6 +13,7 @@ from .base import Callback, _atomic_write_text
 
 logger = logging.getLogger(__name__)
 
+
 def _json_safe(value):
     """Recursively coerce non-finite floats to None so json.dumps(allow_nan=False) succeeds."""
     if isinstance(value, float):
