@@ -63,12 +63,12 @@ class PlotMetricsCallback(Callback):
         self._plot()
 
     def _is_finite_number(v: Any) -> bool:
-        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
-
+        return (
+            isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+        )
 
     def _has_finite(history: List[Dict[str, Any]], key: str) -> bool:
         return any(_is_finite_number(h.get(key)) for h in history)
-
 
     def _plot(self):
         if not self.history:
@@ -79,7 +79,8 @@ class PlotMetricsCallback(Callback):
             for h in self.history:
                 all_keys.update(h.keys())
             metrics = [
-                k for k in sorted(all_keys)
+                k
+                for k in sorted(all_keys)
                 if not _is_non_metric_key(k) and _has_finite(self.history, k)
             ]
         else:
