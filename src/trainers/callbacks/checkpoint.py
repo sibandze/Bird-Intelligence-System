@@ -12,19 +12,9 @@ from .base import Callback, _atomic_torch_save, _unwrap_compile
 
 logger = logging.getLogger(__name__)
 
-
 class CheckpointCallback(Callback):
     """
     Manages all checkpoint I/O. See original docstring for semantics.
-
-    Lifecycle contract per epoch:
-      1. Read/validate the monitored score.
-      2. Decide whether it improved; update `self.best_score` *before*
-         building the checkpoint so the embedded `callbacks_state_dict`
-         reflects the same epoch.
-      3. Build the checkpoint once.
-      4. Always write checkpoint_last.pth.
-      5. On improvement only, write checkpoint_best.pth + best_model.pth.
     """
 
     def __init__(self, run_dir, monitor="val_acc", mode="max", state_dict_fn=None):
@@ -35,7 +25,7 @@ class CheckpointCallback(Callback):
                 f"state_dict_fn must be callable, got {type(state_dict_fn).__name__}"
             )
         self.best_score: Optional[float] = None
-        self.best_epoch: Optional[int] = None  # 1-indexed, matches checkpoint["epoch"]
+        self.best_epoch: Optional[int] = None
         self.run_dir = Path(run_dir)
         self.monitor = monitor
         self.mode = mode
@@ -44,7 +34,6 @@ class CheckpointCallback(Callback):
     def on_train_begin(self, trainer: Any):
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
-        # Monitor/mode agreement
         trainer_monitor = getattr(trainer, "best_monitor", None)
         trainer_mode = getattr(trainer, "best_mode", None)
         if trainer_monitor is not None and self.monitor != trainer_monitor:
@@ -56,14 +45,6 @@ class CheckpointCallback(Callback):
                 f"Checkpoint mode {self.mode!r} != trainer mode {trainer_mode!r}"
             )
 
-        # Adopt trainer_state as authoritative on resume.
-        #
-        # BaseTrainer._update_best() runs *before* cb_runner.on_epoch_end(),
-        # so trainer_state is always at least as current as the callback's
-        # own best_epoch/best_score when a checkpoint is written. If the two
-        # disagree here (ambiguous CallbackRunner restore,
-        # or user-edited state), the callback's tracking is stale and must be
-        # realigned to prevent it from saving a worse model as "best".
         ts = getattr(trainer, "trainer_state", None) or {}
         ts_best = ts.get("best_metric")
         ts_best_epoch = ts.get("best_epoch")
@@ -118,12 +99,12 @@ class CheckpointCallback(Callback):
         if not improved:
             return
 
-        # see §3 — validate inference weights BEFORE writing best checkpoint
         model = _unwrap_compile(trainer.model)
         weights = (
             self.state_dict_fn(model) if self.state_dict_fn else model.state_dict()
         )
-        _validate_state_dict_like(
+        # FIX: was _validate_state_dict_like -> self._validate_state_dict_like
+        self._validate_state_dict_like(
             weights,
             context="state_dict_fn" if self.state_dict_fn else "model.state_dict()",
         )
@@ -203,7 +184,6 @@ class CheckpointCallback(Callback):
                     self.best_epoch = None
 
     def _validate_state_dict_like(self, weights: Any, context: str) -> None:
-        """Reject obviously-wrong state_dict_fn output before it becomes an artifact."""
         if not isinstance(weights, Mapping):
             raise TypeError(
                 f"CheckpointCallback: {context} must return a Mapping, "
