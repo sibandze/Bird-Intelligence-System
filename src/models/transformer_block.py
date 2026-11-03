@@ -3,6 +3,7 @@
 import torch.nn as nn
 from .self_attention import SelfAttention
 
+
 class TransformerBlock(nn.Module):
     def __init__(self, embed_size, heads, dropout, forward_expansion):
         """
@@ -25,7 +26,7 @@ class TransformerBlock(nn.Module):
         # 2. Modified: Changed nn.ReLU() to nn.GELU()
         self.feed_forward = nn.Sequential(
             nn.Linear(embed_size, forward_expansion * embed_size),
-            nn.GELU(), 
+            nn.GELU(),
             nn.Linear(forward_expansion * embed_size, embed_size),
         )
 

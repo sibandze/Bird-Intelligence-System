@@ -32,7 +32,6 @@ from torch.optim.lr_scheduler import (
     OneCycleLR,
 )
 
-
 # ---------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------
@@ -54,9 +53,7 @@ def _validate_scheduler_args(
         raise ValueError("warmup_steps must be >= 0")
 
     if warmup_steps >= total_steps:
-        raise ValueError(
-            "warmup_steps must be smaller than total_steps"
-        )
+        raise ValueError("warmup_steps must be smaller than total_steps")
 
     if min_lr < 0:
         raise ValueError("min_lr must be >= 0")
@@ -68,8 +65,7 @@ def _validate_scheduler_args(
 
     if min_lr >= base_lr:
         raise ValueError(
-            f"min_lr ({min_lr}) must be smaller than "
-            f"optimizer lr ({base_lr})"
+            f"min_lr ({min_lr}) must be smaller than " f"optimizer lr ({base_lr})"
         )
 
 
@@ -242,9 +238,7 @@ def create_scheduler(
         )
 
     else:
-        raise ValueError(
-            f"Unknown scheduler '{scheduler_type}'"
-        )
+        raise ValueError(f"Unknown scheduler '{scheduler_type}'")
 
     # -------------------------------------------------------------
     # Combine warmup + scheduler

@@ -3,8 +3,9 @@
 import torch
 import torch.nn as nn
 
+
 class SpectrogramPatchEmbedding(nn.Module):
-    def __init__(self, n_mels, patch_size, embed_dim): # (128, 25, 256)
+    def __init__(self, n_mels, patch_size, embed_dim):  # (128, 25, 256)
         super().__init__()
 
         self.n_mels = n_mels
@@ -26,12 +27,7 @@ class SpectrogramPatchEmbedding(nn.Module):
         x = x[:, :, :T_trim]
 
         # reshape into patches
-        x = x.reshape(
-            B,
-            M,
-            T_trim // self.patch_size,
-            self.patch_size
-        )
+        x = x.reshape(B, M, T_trim // self.patch_size, self.patch_size)
 
         # now: (B, M, num_patches, patch_size)
 

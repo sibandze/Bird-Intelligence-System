@@ -32,16 +32,18 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
     df = pd.read_csv(data_cfg["data_csv"])
 
     df = df[["common_name", "scientific_name", "Download_link", "xc_id"]].copy()
-    df = df.dropna(
-        subset=["Download_link", "xc_id", "scientific_name"]
-    ).reset_index(drop=True)
+    df = df.dropna(subset=["Download_link", "xc_id", "scientific_name"]).reset_index(
+        drop=True
+    )
 
     # Check config or argument override for full dataset mode
     if use_full_dataset or data_cfg.get("use_full_dataset", False):
         print("🌐 Mode: Full Dataset (No balancing/class filtering)")
         df_target = df.copy()
     else:
-        print(f"⚖️ Mode: Balanced Dataset (Top {num_classes} classes, {num_samples_per_class} samples/class)")
+        print(
+            f"⚖️ Mode: Balanced Dataset (Top {num_classes} classes, {num_samples_per_class} samples/class)"
+        )
         top_classes = (
             df["scientific_name"].value_counts().head(num_classes).index.tolist()
         )
@@ -144,12 +146,14 @@ def run_data_pipeline(config, use_full_dataset: bool = False):
             tqdm.write(f"⚠️ Could not create spectrogram for {xc_id}")
             failed_count += 1
 
-        pbar.set_postfix(
-            proc=processed_count, skip=skipped_count, fail=failed_count
-        )
+        pbar.set_postfix(proc=processed_count, skip=skipped_count, fail=failed_count)
 
     # Output aligned metadata CSV
-    tag = "full" if (use_full_dataset or data_cfg.get("use_full_dataset", False)) else "balanced"
+    tag = (
+        "full"
+        if (use_full_dataset or data_cfg.get("use_full_dataset", False))
+        else "balanced"
+    )
     output_metadata_csv = Path(data_cfg["metadata_dir"]) / (
         f"metadata_{tag}_sr{audio_cfg['sr']}_nfft{audio_cfg['n_fft']}"
         f"_hop{audio_cfg['hop_length']}_nmel{audio_cfg['n_mels']}"

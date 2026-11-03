@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import math
 
+
 class SelfAttention(nn.Module):
     def __init__(self, embed_size, heads, dropout=0.0):
         super(SelfAttention, self).__init__()
@@ -15,8 +16,8 @@ class SelfAttention(nn.Module):
 
         # Project to Q, K, V for all heads at once
         self.values = nn.Linear(self.embed_size, self.embed_size, bias=False)
-        self.keys   = nn.Linear(self.embed_size, self.embed_size, bias=False)
-        self.queries= nn.Linear(self.embed_size, self.embed_size, bias=False)
+        self.keys = nn.Linear(self.embed_size, self.embed_size, bias=False)
+        self.queries = nn.Linear(self.embed_size, self.embed_size, bias=False)
 
         # 1. Added: Attention Dropout Layer
         self.dropout = nn.Dropout(dropout)

@@ -65,17 +65,13 @@ class PrecisionManager:
         enabled: bool = True,
         device: str = "cuda",
         use_bfloat16: bool = False,
-        init_scale: float = 2.0 ** 16,
+        init_scale: float = 2.0**16,
         growth_interval: int = 2000,
     ):
 
         self.device = device
 
-        self.enabled = (
-            enabled
-            and device == "cuda"
-            and torch.cuda.is_available()
-        )
+        self.enabled = enabled and device == "cuda" and torch.cuda.is_available()
 
         self.use_bfloat16 = use_bfloat16
 

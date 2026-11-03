@@ -30,9 +30,11 @@ Linear
         ▼
 234 Logits
 """
+
 import torch
 import torch.nn as nn
 from .encoder import Encoder
+
 
 class BirdClassifier(nn.Module):
     def __init__(
@@ -44,13 +46,13 @@ class BirdClassifier(nn.Module):
         heads=8,
         forward_expansion=4,
         dropout=0.1,
-        num_classes=200, # <- set to your n_species
-        time_steps = 187,
-        device="cpu"
+        num_classes=200,  # <- set to your n_species
+        time_steps=187,
+        device="cpu",
     ):
         super().__init__()
         num_patches = time_steps // patch_size
-        max_len = num_patches + 1 + 10 # +1 CLS, + 10 buffer for longer audio
+        max_len = num_patches + 1 + 10  # +1 CLS, + 10 buffer for longer audio
         self.encoder = Encoder(
             n_mels=n_mels,
             patch_size=patch_size,
@@ -69,7 +71,7 @@ class BirdClassifier(nn.Module):
             nn.Linear(embed_dim, embed_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(embed_dim, num_classes)
+            nn.Linear(embed_dim, num_classes),
         )
 
         self._init_weights()
@@ -95,7 +97,7 @@ class BirdClassifier(nn.Module):
         enc_out = self.encoder(x, mask)
 
         # CLS token is first token
-        cls_token = enc_out[:, 0] # (B, embed_dim)
+        cls_token = enc_out[:, 0]  # (B, embed_dim)
 
-        logits = self.head(cls_token) # (B, num_classes)
+        logits = self.head(cls_token)  # (B, num_classes)
         return logits
