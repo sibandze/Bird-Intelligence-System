@@ -311,7 +311,7 @@ class BaseTrainer(ABC):
 
         # Support both supervised and SSL metrics, handle missing
         train_loss = _fmt(logs.get("train_loss"))
-        train_acc = logs.get("train_acc")
+        train_acc = logs.get("train_acc", logs.get("train_contrastive_acc"))
         val_loss = _fmt(logs.get("val_loss"))
         val_acc = logs.get("val_acc")
         val_win_acc = logs.get("val_window_acc")
