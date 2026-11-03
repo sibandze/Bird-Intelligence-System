@@ -250,18 +250,31 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
         )
 
     def _print_epoch_summary(self, logs):
-        # Override only to add `Val Acc` — this is the monitored metric
-        # (best_monitor="val_acc"); the base format shows Train Acc but
-        # not Val Acc.
-        epochs = self.config["training"]["epochs"]
+        def _fmt(v):
+            if v is None:
+                return "N/A"
+            try:
+                fv = float(v)
+                import math
+
+                return f"{fv:.4f}" if math.isfinite(fv) else "N/A"
+            except:
+                return str(v)
+
+        best_str = (
+            f"{self.best_metric_value:.4f} (ep {self.best_epoch})"
+            if self._has_best
+            else "None (no best yet)"
+        )
+
         print(
-            f"Epoch {logs['epoch']}/{epochs} | "
+            f"Epoch {logs['epoch']}/{self.config['training']['epochs']} | "
             f"{logs['epoch_time_sec']:.1f}s | "
-            f"Train Loss: {logs['train_loss']:.4f} | "
-            f"Train Acc: {logs['train_acc']:.4f} | "
-            f"Val Loss: {logs['val_loss']:.4f} | "
-            f"Val Acc: {logs['val_acc']:.4f} | "
-            f"Best: {self.best_metric_value:.4f} (ep {self.best_epoch})"
+            f"Train Loss: {_fmt(logs.get('train_loss'))} | "
+            f"Train Acc: {_fmt(logs.get('train_acc'))} | "
+            f"Val Loss: {_fmt(logs.get('val_loss'))} | "
+            f"Val Acc: {_fmt(logs.get('val_acc'))} | "
+            f"Best: {best_str}"
         )
 
     # ── training ────────────────────────────────────────────────────────
@@ -321,7 +334,7 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
     # ── validation ──────────────────────────────────────────────────────
     def _validate_epoch(self, epoch: int) -> Dict[str, float]:
         if self.val_loader is None or len(self.val_loader.dataset) == 0:
-            return {"val_loss": 0.0, "val_acc": 0.0, "val_window_acc": 0.0}
+            return {}  # # contract: empty dict = no validation
 
         self.model.eval()
         epochs = self.config["training"]["epochs"]
@@ -380,6 +393,9 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
 
     # ── post-train (test evaluation) ────────────────────────────────────
     def _post_train(self) -> Dict[str, Any]:
+        # Evaluation is deterministic (sliding windows, no augmentation)
+        # so restoring RNG from best checkpoint is not required.
+        # Loading weights only is sufficient.
         if self.test_loader is None or len(self.test_loader.dataset) == 0:
             print("WARNING: Test set is empty. Skipping final evaluation.")
             return {
