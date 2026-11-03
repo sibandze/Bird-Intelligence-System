@@ -51,16 +51,22 @@ class ExperimentManager:
         base_config_path: str,
         results_dir: str = "results",
         mode: str = "auto",
+        quick: bool = False,
     ):
         """
         Args:
             mode: 'supervised', 'ssl', or 'auto'.
                   'auto' infers from suite name prefix.
+            quick: If True, force 2 epochs + 5% stratified data sample
+                   (smoke-test mode). Overrides any sweep `training.epochs`.
         """
         self.base_config_path = Path(base_config_path)
         self.results_dir = Path(results_dir)
         self.results_dir.mkdir(exist_ok=True, parents=True)
         self.mode = mode
+        self.quick = quick
+        if quick:
+            print("⚡ QUICK MODE: forcing 2 epochs + 5% per-class data sample")
 
         # Initialize seed attribute before set_seed() or load_data() are called
         self.seed = 42
@@ -90,89 +96,117 @@ class ExperimentManager:
             torch.cuda.manual_seed_all(seed)
 
     def load_data(self):
-        """Load and distill dataset to num_classes and num_samples_per_class."""
-        if self.df is None:
-            csv_path = resolve_metadata_csv_path(self.base_config)
-            if not os.path.exists(csv_path):
-                raise FileNotFoundError(
-                    f"Processed CSV not found at {csv_path}.",
-                    f"Run data pipeline first: python main.py --pipeline",
+        """Load and distill dataset to num_classes and num_samples_per_class.
+
+        In quick mode, skip distillation and take 5% per class (min 1)
+        to exercise every code path on the full class set.
+        """
+        if self.df is not None:
+            return self.df
+
+        csv_path = resolve_metadata_csv_path(self.base_config)
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError(
+                f"Processed CSV not found at {csv_path}.",
+                f"Run data pipeline first: python main.py --pipeline",
+            )
+        full_df = pd.read_csv(csv_path)
+        print(f"✓ Loaded {len(full_df)} samples from {csv_path}")
+
+        data_cfg = self.base_config.get("data", {})
+        label_col = data_cfg.get("label_column") or "scientific_name_id"
+
+        # ── Quick mode: 5% per class, min 1, no distillation ────────────
+        if self.quick:
+            n_classes = full_df[label_col].nunique()
+            print(
+                f"⚡ Quick mode: sampling 5% per class (min 1) "
+                f"across {n_classes} classes"
+            )
+            sampled_dfs = [
+                g.sample(n=max(1, int(len(g) * 0.05)), random_state=self.seed)
+                for _, g in full_df.groupby(label_col)
+            ]
+            self.df = pd.concat(sampled_dfs, ignore_index=True)
+            self.df = self.df.sample(frac=1, random_state=self.seed).reset_index(
+                drop=True
+            )
+            print(f"✓ Quick dataset: {len(self.df)} samples")
+            return self.df
+
+        # ── Standard distillation ───────────────────────────────────────
+        use_full_dataset = data_cfg.get("full_dataset", False)
+
+        if not use_full_dataset:
+            requested_classes = data_cfg.get("num_classes")
+            requested_samples = data_cfg.get("num_samples_per_class")
+            print(
+                f"🔬 Distilling dataset to {requested_classes} classes x "
+                f"{requested_samples} samples each"
+            )
+
+            # Group by label
+            grouped = full_df.groupby(label_col)
+            class_counts = grouped.size().sort_values(ascending=False)
+
+            # Check how many classes have enough samples
+            eligible_classes = class_counts[class_counts >= requested_samples]
+
+            if len(eligible_classes) < requested_classes:
+                # Auto-reduce to the highest common number
+                # Find the maximum samples per class available for the top requested_classes
+                top_class_counts = class_counts.head(requested_classes)
+                max_possible = int(top_class_counts.min())
+
+                warnings.warn(
+                    f"Only {len(eligible_classes)} classes have at least "
+                    f"{requested_samples} samples. "
+                    f"Auto-reducing samples per class to {max_possible} "
+                    f"(max common across top {requested_classes} classes)."
                 )
-            full_df = pd.read_csv(csv_path)
-            print(f"✓ Loaded {len(full_df)} samples from {csv_path}")
+                requested_samples = max_possible
 
-            # ---- Distillation ----
-            data_cfg = self.base_config.get("data", {})
-            use_full_dataset = data_cfg.get("full_dataset", False)
-            label_col = data_cfg.get("label_column")
-
-            if not use_full_dataset:
-                requested_classes = data_cfg.get("num_classes")
-                requested_samples = data_cfg.get("num_samples_per_class")
-                print(
-                    f"🔬 Distilling dataset to {requested_classes} classes x {requested_samples} samples each"
-                )
-
-                # Group by label
-                grouped = full_df.groupby(label_col)
-                class_counts = grouped.size().sort_values(ascending=False)
-
-                # Check how many classes have enough samples
+                # Re-check eligibility with reduced samples
                 eligible_classes = class_counts[class_counts >= requested_samples]
 
                 if len(eligible_classes) < requested_classes:
-                    # Auto-reduce to the highest common number
-                    # Find the maximum samples per class available for the top requested_classes
-                    top_class_counts = class_counts.head(requested_classes)
-                    max_possible = int(top_class_counts.min())
-
+                    # If still not enough, reduce number of classes too
+                    new_num_classes = len(eligible_classes)
                     warnings.warn(
-                        f"Only {len(eligible_classes)} classes have at least {requested_samples} samples. "
-                        f"Auto-reducing samples per class to {max_possible} (max common across top {requested_classes} classes)."
+                        f"Still only {len(eligible_classes)} classes available "
+                        f"with {requested_samples} samples. "
+                        f"Auto-reducing num_classes to {new_num_classes}."
                     )
-                    requested_samples = max_possible
+                    requested_classes = new_num_classes
 
-                    # Re-check eligibility with reduced samples
-                    eligible_classes = class_counts[class_counts >= requested_samples]
+            selected_classes = sorted(
+                eligible_classes.index[:requested_classes].tolist()
+            )
+            print(
+                f"   Selected {len(selected_classes)} classes with "
+                f"{requested_samples} samples each"
+            )
+            print(f"   Classes: {selected_classes}")
 
-                    if len(eligible_classes) < requested_classes:
-                        # If still not enough, reduce number of classes too
-                        new_num_classes = len(eligible_classes)
-                        warnings.warn(
-                            f"Still only {len(eligible_classes)} classes available with {requested_samples} samples. "
-                            f"Auto-reducing num_classes to {new_num_classes}."
-                        )
-                        requested_classes = new_num_classes
+            # Sample per class
+            sampled_dfs = []
+            rng = np.random.RandomState(self.seed)
+            for cls in selected_classes:
+                cls_df = full_df[full_df[label_col] == cls]
+                sampled = cls_df.sample(n=requested_samples, random_state=rng)
+                sampled_dfs.append(sampled)
 
-                selected_classes = sorted(
-                    eligible_classes.index[:requested_classes].tolist()
-                )
-                print(
-                    f"   Selected {len(selected_classes)} classes with {requested_samples} samples each"
-                )
-                print(f"   Classes: {selected_classes}")
+            self.df = pd.concat(sampled_dfs, ignore_index=True)
+            print(f"✓ Final distilled dataset: {len(self.df)} samples")
 
-                # Sample per class
-                sampled_dfs = []
-                rng = np.random.RandomState(self.seed)
-                for cls in selected_classes:
-                    cls_df = full_df[full_df[label_col] == cls]
-                    sampled = cls_df.sample(n=requested_samples, random_state=rng)
-                    sampled_dfs.append(sampled)
+            # Optional: shuffle the final dataset
+            self.df = self.df.sample(frac=1, random_state=rng).reset_index(drop=True)
 
-                self.df = pd.concat(sampled_dfs, ignore_index=True)
-                print(f"✓ Final distilled dataset: {len(self.df)} samples")
-
-                # Optional: shuffle the final dataset
-                self.df = self.df.sample(frac=1, random_state=rng).reset_index(
-                    drop=True
-                )
-
-                # Update config with actual values used
-                self.base_config["data"]["num_classes"] = requested_classes
-                self.base_config["data"]["num_samples_per_class"] = requested_samples
-            else:
-                self.df = full_df
+            # Update config with actual values used
+            self.base_config["data"]["num_classes"] = requested_classes
+            self.base_config["data"]["num_samples_per_class"] = requested_samples
+        else:
+            self.df = full_df
 
         return self.df
 
@@ -242,6 +276,11 @@ class ExperimentManager:
         for dotted_path, param_value in hyperparams.items():
             set_nested_config(config, dotted_path, param_value)
 
+        # ── Quick mode is authoritative — must win over sweep values ────
+        if self.quick:
+            config["training"]["epochs"] = 2
+            config["training"]["patience"] = 5
+
         # Per-run seed for reproducible, distinct runs
         config["experiment"]["seed"] = run_seed
 
@@ -257,6 +296,8 @@ class ExperimentManager:
         config["experiment"]["run_dir"] = str(run_dir)
         config["experiment"]["timestamp"] = datetime.now().isoformat()
         config["experiment"]["hyperparams"] = hyperparams
+        if self.quick:
+            config["experiment"]["quick_mode"] = True
 
         return config
 
@@ -318,6 +359,7 @@ class ExperimentManager:
         if dry_run:
             print(f"  [{run_index}] [DRY RUN] [{mode}] Would train with: {hyperparams}")
             print(f"      Seed: {run_seed}")
+            print(f"      Epochs: {run_config['training']['epochs']}")
             print(f"      Config: {run_dir}/config.yaml")
             return None
 
@@ -373,11 +415,12 @@ class ExperimentManager:
     def save_experiment_summary(self, mode: str = "supervised"):
         """Generate a summary of the experiment."""
         summary_path = self.experiment_dir / "EXPERIMENT_SUMMARY.md"
+        quick_note = " (⚡ quick)" if self.quick else ""
         summary = (
             f"# Experiment Summary\n"
             f"\n"
             f"**Experiment ID:** {self.experiment_name}\n"
-            f"**Mode:** {mode}\n"
+            f"**Mode:** {mode}{quick_note}\n"
             f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"**Total Runs:** {self.run_counter}\n"
             f"**Base Seed:** {self.seed}\n"
@@ -464,6 +507,20 @@ class ExperimentManager:
                 f"- Use those as baseline for contrastive learning experiments\n"
             )
 
+        if self.quick:
+            summary += (
+                f"\n"
+                f"## ⚡ Quick Mode Notice\n"
+                f"\n"
+                f"This run was executed in **quick mode**:\n"
+                f"- Epochs forced to 2\n"
+                f"- Data reduced to 5% per class (min 1 sample)\n"
+                f"- Patience forced to 5\n"
+                f"\n"
+                f"These results are for **smoke-testing** only — do not\n"
+                f"compare them against full-data baselines.\n"
+            )
+
         with open(summary_path, "w") as f:
             f.write(summary)
 
@@ -504,13 +561,20 @@ def main():
         help="Print configurations without running training",
     )
     parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Smoke test: force 2 epochs + 5%% per-class data sample",
+    )
+    parser.add_argument(
         "--seed", type=int, default=42, help="Random seed for reproducibility"
     )
 
     args = parser.parse_args()
 
     # Initialize experiment manager
-    manager = ExperimentManager(args.config, args.results_dir, mode=args.mode)
+    manager = ExperimentManager(
+        args.config, args.results_dir, mode=args.mode, quick=args.quick
+    )
     manager.set_seed(args.seed)
 
     # Get sweep suite
@@ -523,15 +587,18 @@ def main():
     print(f"🚀 Running Experiment Suite: {args.suite}")
     print(f"   Mode: {effective_mode}")
     print(f"   Base Seed: {args.seed}")
+    if args.quick:
+        print(f"   ⚡ QUICK MODE: 2 epochs, 5% per-class data")
     print(f"{'='*80}\n")
 
     total_runs = sum(len(sweep.generate_configs()) for sweep in sweep_suite)
     print(f"📊 Total configurations to run: {total_runs}")
 
     if not args.dry_run:
+        est_min = 1 if args.quick else 10
         print(
-            f"⚠️  This will take approximately {total_runs * 10} minutes "
-            f"(assuming ~10 min/run)"
+            f"⚠️  This will take approximately {total_runs * est_min} minutes "
+            f"(assuming ~{est_min} min/run)"
         )
         print(f"💾 Results will be saved to: {manager.results_dir}\n")
 
