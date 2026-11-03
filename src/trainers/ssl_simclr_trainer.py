@@ -1,4 +1,5 @@
 # src/trainers/ssl_simclr_trainer.py
+
 from typing import Dict, Any, List
 
 import torch
@@ -112,32 +113,7 @@ class SimCLRExperimentTrainer(BaseTrainer):
         super()._print_train_init()
         print(f"    Temperature: {self.model.temperature}")
 
-    def _print_epoch_summary(self, logs):
-        def _fmt(v):
-            if v is None:
-                return "N/A"
-            try:
-                fv = float(v)
-                import math
-
-                return f"{fv:.4f}" if math.isfinite(fv) else "N/A"
-            except:
-                return str(v)
-
-        best_str = (
-            f"{self.best_metric_value:.4f} (ep {self.best_epoch})"
-            if self._has_best
-            else "None (no best yet)"
-        )
-        print(
-            f"Epoch {logs['epoch']}/{self.config['training']['epochs']} | "
-            f"{logs['epoch_time_sec']:.1f}s | "
-            f"Train Loss: {_fmt(logs.get('train_loss'))} | "
-            f"Train Cont Acc: {_fmt(logs.get('train_contrastive_acc'))} | "
-            f"Val Loss: {_fmt(logs.get('val_loss'))} | "
-            f"Val Cont Acc: {_fmt(logs.get('val_contrastive_acc'))} | "
-            f"Best: {best_str}"
-        )
+    # Using BaseTrainer._print_epoch_summary - handles N/A, Best: None, LR
 
     def _train_epoch(self, epoch: int) -> Dict[str, float]:
         self.model.train()
@@ -149,11 +125,11 @@ class SimCLRExperimentTrainer(BaseTrainer):
         total_samples = 0
 
         pbar = tqdm(
-            self.train_loader,
-            desc=f"Epoch {epoch+1}/{epochs} [Train]",
-            leave=False,
+            self.train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]", leave=False
         )
-        for x1, x2 in pbar:
+        for batch_idx, (x1, x2) in enumerate(pbar):
+            self.cb_runner.on_batch_begin(self, batch_idx, {"batch": batch_idx})
+
             x1 = x1.to(self.device)
             x2 = x2.to(self.device)
             self.optimizer.zero_grad(set_to_none=True)
@@ -168,6 +144,16 @@ class SimCLRExperimentTrainer(BaseTrainer):
             n_batches += 1
             pbar.set_postfix(loss=loss.item(), acc=acc.item())
 
+            self.cb_runner.on_batch_end(
+                self,
+                batch_idx,
+                {
+                    "loss": loss.item(),
+                    "grad_norm": grad_norm,
+                    "lr": self.optimizer.param_groups[0]["lr"],
+                },
+            )
+
         n = max(total_samples, 1)
         return {
             "train_loss": loss_total / n,
@@ -177,13 +163,11 @@ class SimCLRExperimentTrainer(BaseTrainer):
         }
 
     def _validate_epoch(self, epoch: int) -> Dict[str, float]:
-        if getattr(self, "val_loader", None) is None:
+        if (
+            getattr(self, "val_loader", None) is None
+            or len(self.val_loader.dataset) == 0
+        ):
             return {}
-        try:
-            if len(self.val_loader.dataset) == 0:
-                return {}
-        except Exception:
-            pass
 
         self.model.eval()
         epochs = self.config["training"]["epochs"]
@@ -193,9 +177,7 @@ class SimCLRExperimentTrainer(BaseTrainer):
 
         with torch.no_grad():
             for x1, x2 in tqdm(
-                self.val_loader,
-                desc=f"Epoch {epoch+1}/{epochs} [Val]",
-                leave=False,
+                self.val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]", leave=False
             ):
                 x1 = x1.to(self.device)
                 x2 = x2.to(self.device)
@@ -213,8 +195,7 @@ class SimCLRExperimentTrainer(BaseTrainer):
         }
 
     def _post_train(self) -> Dict[str, Any]:
-        # Evaluation deterministic - encoder only
-        # best_model.pth here is encoder weights due to state_dict_fn
+        # Evaluation deterministic - encoder only (best_model.pth is encoder weights)
         return {
             "val_loss": self._last_val_metrics.get("val_loss"),
             "val_contrastive_acc": self._last_val_metrics.get("val_contrastive_acc"),
