@@ -240,4 +240,3 @@ SWEEP_SUITES = {
         SSL_WEIGHT_DECAY_SWEEP,
     ],
 }
-~/work/Bird-Intelligence-System $
