@@ -1,5 +1,4 @@
 # src/trainers/ssl_simclr_trainer.py
-
 from typing import Dict, Any, List
 
 import torch
@@ -24,19 +23,12 @@ from .callbacks import (
 
 
 class SimCLRExperimentTrainer(BaseTrainer):
-    """
-    Trainer for self-supervised contrastive learning with SimCLR.
-    Trains an encoder + projection head; ``best_model.pth`` contains
-    only the encoder weights for downstream use.
-    """
-
     def __init__(self, config, run_dir, callbacks=None):
         self.best_monitor = "val_loss"
         self.best_mode = "min"
         super().__init__(config, run_dir, callbacks)
         self.trainer_state["objective"] = "simclr"
 
-    # ── callbacks ───────────────────────────────────────────────────────
     def _get_default_callbacks(self) -> List[Callback]:
         return [
             EarlyStoppingCallback(
@@ -50,15 +42,12 @@ class SimCLRExperimentTrainer(BaseTrainer):
                 run_dir=self.run_dir,
                 monitor=self.best_monitor,
                 mode=self.best_mode,
-                # Strip projection head — only the encoder is useful
-                # after pretraining.
                 state_dict_fn=lambda m: m.encoder.state_dict(),
             ),
             AutoReportCallback(),
             WandBLoggerCallback(self.config, self.run_dir),
         ]
 
-    # ── data ────────────────────────────────────────────────────────────
     def get_dataloaders(self, df):
         batch_size = self.config["training"]["batch_size"]
         num_workers = self.config["training"]["num_workers"]
@@ -101,11 +90,9 @@ class SimCLRExperimentTrainer(BaseTrainer):
         self.train_loader = DataLoader(train_dataset, shuffle=True, **loader_kw)
         self.val_loader = DataLoader(val_dataset, shuffle=False, **loader_kw)
 
-    # ── model ───────────────────────────────────────────────────────────
     def _build_model(self):
         enc_cfg = self.config["model"]
         proj_cfg = self.config.get("projection", {})
-
         encoder = CNNEncoder(
             n_mels=self.config["audio"]["n_mels"],
             embed_dim=enc_cfg.get("embed_dim", 512),
@@ -118,31 +105,40 @@ class SimCLRExperimentTrainer(BaseTrainer):
             output_dim=proj_cfg.get("output_dim", 128),
         )
         temperature = self.config["training"].get("temperature", 0.07)
-
         model = SimCLR(encoder=encoder, projection=projection, temperature=temperature)
         return model.to(self.device)
 
-    # ── printing ────────────────────────────────────────────────────────
     def _print_train_init(self):
         super()._print_train_init()
         print(f"    Temperature: {self.model.temperature}")
 
     def _print_epoch_summary(self, logs):
-        # SSL is monitored on val_loss (best_mode="min"); contrastive
-        # accuracy is reported alongside for interpretability but does
-        # not drive checkpointing.
-        epochs = self.config["training"]["epochs"]
+        def _fmt(v):
+            if v is None:
+                return "N/A"
+            try:
+                fv = float(v)
+                import math
+
+                return f"{fv:.4f}" if math.isfinite(fv) else "N/A"
+            except:
+                return str(v)
+
+        best_str = (
+            f"{self.best_metric_value:.4f} (ep {self.best_epoch})"
+            if self._has_best
+            else "None (no best yet)"
+        )
         print(
-            f"Epoch {logs['epoch']}/{epochs} | "
+            f"Epoch {logs['epoch']}/{self.config['training']['epochs']} | "
             f"{logs['epoch_time_sec']:.1f}s | "
-            f"Train Loss: {logs['train_loss']:.4f} | "
-            f"Train Contrastive Acc: {logs['train_contrastive_acc']:.4f} | "
-            f"Val Loss: {logs['val_loss']:.4f} | "
-            f"Val Contrastive Acc: {logs['val_contrastive_acc']:.4f} | "
-            f"Best: {self.best_metric_value:.4f} (ep {self.best_epoch})"
+            f"Train Loss: {_fmt(logs.get('train_loss'))} | "
+            f"Train Cont Acc: {_fmt(logs.get('train_contrastive_acc'))} | "
+            f"Val Loss: {_fmt(logs.get('val_loss'))} | "
+            f"Val Cont Acc: {_fmt(logs.get('val_contrastive_acc'))} | "
+            f"Best: {best_str}"
         )
 
-    # ── training ────────────────────────────────────────────────────────
     def _train_epoch(self, epoch: int) -> Dict[str, float]:
         self.model.train()
         epochs = self.config["training"]["epochs"]
@@ -161,19 +157,15 @@ class SimCLRExperimentTrainer(BaseTrainer):
             x1 = x1.to(self.device)
             x2 = x2.to(self.device)
             self.optimizer.zero_grad(set_to_none=True)
-
             with self.precision.autocast():
                 loss, acc = self.model.training_step(x1, x2)
-
             grad_norm = self._backward_and_step(loss)
             grad_sum += grad_norm
-
             bs = x1.size(0)
             loss_total += loss.item() * bs
             acc_total += acc.item() * bs
             total_samples += bs
             n_batches += 1
-
             pbar.set_postfix(loss=loss.item(), acc=acc.item())
 
         n = max(total_samples, 1)
@@ -184,8 +176,15 @@ class SimCLRExperimentTrainer(BaseTrainer):
             "train_total": total_samples,
         }
 
-    # ── validation ──────────────────────────────────────────────────────
     def _validate_epoch(self, epoch: int) -> Dict[str, float]:
+        if getattr(self, "val_loader", None) is None:
+            return {}
+        try:
+            if len(self.val_loader.dataset) == 0:
+                return {}
+        except Exception:
+            pass
+
         self.model.eval()
         epochs = self.config["training"]["epochs"]
         loss_total = 0.0
@@ -213,14 +212,15 @@ class SimCLRExperimentTrainer(BaseTrainer):
             "val_contrastive_acc": acc_total / n,
         }
 
-    # ── post-train ──────────────────────────────────────────────────────
     def _post_train(self) -> Dict[str, Any]:
+        # Evaluation deterministic - encoder only
+        # best_model.pth here is encoder weights due to state_dict_fn
         return {
-            "val_loss": self._last_val_metrics.get("val_loss", 0),
-            "val_contrastive_acc": self._last_val_metrics.get("val_contrastive_acc", 0),
-            "train_loss": self._last_train_metrics.get("train_loss", 0),
+            "val_loss": self._last_val_metrics.get("val_loss"),
+            "val_contrastive_acc": self._last_val_metrics.get("val_contrastive_acc"),
+            "train_loss": self._last_train_metrics.get("train_loss"),
             "train_contrastive_acc": self._last_train_metrics.get(
-                "train_contrastive_acc", 0
+                "train_contrastive_acc"
             ),
             "best_loss": self.best_metric_value,
             "best_epoch": self.best_epoch,
