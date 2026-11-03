@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -25,10 +26,10 @@ _NON_METRIC_EXACT = frozenset(
     }
 )
 
+
 def _is_finite_number(v: Any) -> bool:
-    return (
-        isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
-    )
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
 
 def _is_non_metric_key(k: str) -> bool:
     if k in _EPOCH_META_KEYS or k in _NON_METRIC_EXACT:
@@ -38,8 +39,10 @@ def _is_non_metric_key(k: str) -> bool:
         return True
     return False
 
+
 def _has_finite(history: List[Dict[str, Any]], key: str) -> bool:
     return any(_is_finite_number(h.get(key)) for h in history)
+
 
 class PlotMetricsCallback(Callback):
     def __init__(

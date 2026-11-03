@@ -12,6 +12,7 @@ from .base import Callback, _atomic_torch_save, _unwrap_compile
 
 logger = logging.getLogger(__name__)
 
+
 class CheckpointCallback(Callback):
     """
     Manages all checkpoint I/O. See original docstring for semantics.

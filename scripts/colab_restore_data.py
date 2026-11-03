@@ -161,7 +161,7 @@ def restore_archives(
                         extracted += 1
                     else:
                         member.name = flat_name
-                        tar.extract(member, path=local_path, filter = 'data')
+                        tar.extract(member, path=local_path, filter="data")
                         extracted += 1
 
         except tarfile.ReadError as e:
