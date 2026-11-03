@@ -27,8 +27,6 @@ from .callbacks import (
     _unwrap_compile,
 )
 
-# ── helpers ─────────────────────────────────────────────────────────────
-
 
 def supervised_val_collate_fn(batch):
     """Collate for validation/test batches of (x, y, recording_id)."""
@@ -39,10 +37,6 @@ def supervised_val_collate_fn(batch):
 
 
 def aggregate_recordings(logits_all, labels_all, recording_ids_all):
-    """
-    Aggregate window-level outputs to recording-level predictions.
-    O(n) via grouping; avoids repeated full-array scans.
-    """
     groups: Dict[str, list] = defaultdict(list)
     for i, rec_id in enumerate(recording_ids_all):
         groups[str(rec_id)].append(i)
@@ -58,11 +52,7 @@ def aggregate_recordings(logits_all, labels_all, recording_ids_all):
     return rec_ids, rec_targets, rec_logits
 
 
-# ── trainer ─────────────────────────────────────────────────────────────
 class SupervisedTransformerExperimentTrainer(BaseTrainer):
-    """Supervised classification training engine with callback-driven
-    architecture and recording-level evaluation."""
-
     _weight_decay_default: float = 0.01
 
     def __init__(self, config, run_dir, callbacks=None):
@@ -72,7 +62,6 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
         super().__init__(config, run_dir, callbacks)
         self.trainer_state["objective"] = "supervised_transformer"
 
-    # ── callbacks ───────────────────────────────────────────────────────
     def _get_default_callbacks(self) -> List[Callback]:
         return [
             EarlyStoppingCallback(
@@ -89,7 +78,6 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
             WandBLoggerCallback(self.config, self.run_dir),
         ]
 
-    # ── data ────────────────────────────────────────────────────────────
     def get_dataloaders(self, df: pd.DataFrame):
         batch_size = self.config["training"]["batch_size"]
         num_workers = self.config["training"]["num_workers"]
@@ -137,7 +125,6 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
             )
             train_df = pd.concat([train_df, rare_df], ignore_index=True)
 
-        # ── datasets ────────────────────────────────────────────────────
         train_dataset = SupervisedBirdSongDataset(
             df=train_df,
             segment_size=segment_size,
@@ -161,10 +148,7 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
                 label_to_idx=self.label_to_idx,
                 min_db=self.config["audio"]["min_db"],
                 max_db=self.config["audio"]["max_db"],
-                window_config={
-                    "strategy": "sliding",
-                    "stride": segment_size,
-                },
+                window_config={"strategy": "sliding", "stride": segment_size},
                 return_recording_id=True,
             )
 
@@ -177,14 +161,10 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
                 label_to_idx=self.label_to_idx,
                 min_db=self.config["audio"]["min_db"],
                 max_db=self.config["audio"]["max_db"],
-                window_config={
-                    "strategy": "sliding",
-                    "stride": segment_size,
-                },
+                window_config={"strategy": "sliding", "stride": segment_size},
                 return_recording_id=True,
             )
 
-        # ── loaders ─────────────────────────────────────────────────────
         loader_kw = dict(
             batch_size=batch_size,
             num_workers=num_workers,
@@ -212,7 +192,6 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
                 **loader_kw,
             )
 
-    # ── model ───────────────────────────────────────────────────────────
     def _build_model(self):
         model = SupervisedTransformer(
             config=self.config,
@@ -222,62 +201,28 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
         return model.to(self.device)
 
     def _on_pre_train(self):
-        # Save label mappings for inference / export
         label_map_path = self.run_dir / "label_mappings.json"
         label_map_path.write_text(
             json.dumps(
-                {
-                    "label_to_idx": self.label_to_idx,
-                    "idx_to_label": self.idx_to_label,
-                },
+                {"label_to_idx": self.label_to_idx, "idx_to_label": self.idx_to_label},
                 indent=2,
             )
         )
-
-        # Compile after checkpoint weights are loaded
         if self.config["training"].get("compile_model", False):
             self.model = torch.compile(self.model)
 
-    # ── printing ────────────────────────────────────────────────────────
     def _print_train_init(self):
         super()._print_train_init()
         compiled = self.config["training"].get("compile_model", False)
         print(f"    Compiled:  {compiled}")
         print(f"    Classes:   {len(self.class_names)}")
         print(
-            f"    Test samples:  "
-            f"{len(self.test_loader.dataset) if self.test_loader else 0}"
+            f"    Test samples:  {len(self.test_loader.dataset) if self.test_loader else 0}"
         )
 
-    def _print_epoch_summary(self, logs):
-        def _fmt(v):
-            if v is None:
-                return "N/A"
-            try:
-                fv = float(v)
-                import math
+    # NOTE: _print_epoch_summary removed - using BaseTrainer implementation
+    # which handles N/A, Best: None, LR, samples/sec, and all val_* keys.
 
-                return f"{fv:.4f}" if math.isfinite(fv) else "N/A"
-            except:
-                return str(v)
-
-        best_str = (
-            f"{self.best_metric_value:.4f} (ep {self.best_epoch})"
-            if self._has_best
-            else "None (no best yet)"
-        )
-
-        print(
-            f"Epoch {logs['epoch']}/{self.config['training']['epochs']} | "
-            f"{logs['epoch_time_sec']:.1f}s | "
-            f"Train Loss: {_fmt(logs.get('train_loss'))} | "
-            f"Train Acc: {_fmt(logs.get('train_acc'))} | "
-            f"Val Loss: {_fmt(logs.get('val_loss'))} | "
-            f"Val Acc: {_fmt(logs.get('val_acc'))} | "
-            f"Best: {best_str}"
-        )
-
-    # ── training ────────────────────────────────────────────────────────
     def _train_epoch(self, epoch: int) -> Dict[str, float]:
         self.model.train()
         epochs = self.config["training"]["epochs"]
@@ -289,13 +234,10 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
 
         for batch_idx, (mel_segments, labels) in enumerate(
             tqdm(
-                self.train_loader,
-                desc=f"Epoch {epoch+1}/{epochs} [Train]",
-                leave=False,
+                self.train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]", leave=False
             )
         ):
             self.cb_runner.on_batch_begin(self, batch_idx, {"batch": batch_idx})
-
             mel_segments = mel_segments.to(self.device)
             labels = labels.to(self.device)
             self.optimizer.zero_grad(set_to_none=True)
@@ -331,71 +273,56 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
             "train_total": total,
         }
 
-    # ── validation ──────────────────────────────────────────────────────
     def _validate_epoch(self, epoch: int) -> Dict[str, float]:
-        if self.val_loader is None or len(self.val_loader.dataset) == 0:
-            return {}  # # contract: empty dict = no validation
+        if (
+            getattr(self, "val_loader", None) is None
+            or len(self.val_loader.dataset) == 0
+        ):
+            return {}
 
         self.model.eval()
         epochs = self.config["training"]["epochs"]
-
-        val_loss_total = 0.0
+        all_logits, all_labels, all_rec_ids = [], [], []
         correct_window = 0
         total_windows = 0
-        all_logits, all_labels, all_rec_ids = [], [], []
 
         with torch.no_grad():
             for mel_segments, labels, recording_ids in tqdm(
-                self.val_loader,
-                desc=f"Epoch {epoch+1}/{epochs} [Val]",
-                leave=False,
+                self.val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]", leave=False
             ):
                 mel_segments = mel_segments.to(self.device)
                 labels = labels.to(self.device)
-
                 with self.precision.autocast():
                     logits = self.model(mel_segments)
-
-                loss = self.criterion(logits, labels)
-                val_loss_total += loss.item() * labels.size(0)
                 preds = torch.argmax(logits, dim=1)
                 correct_window += (preds == labels).sum().item()
                 total_windows += labels.size(0)
-
                 all_logits.append(logits.detach().cpu())
                 all_labels.append(labels.cpu())
                 all_rec_ids.extend(recording_ids)
 
-        avg_val_loss = 0.0
-        val_acc = 0.0
-        val_window_acc = 0.0
+        if total_windows == 0:
+            return {}
 
-        if total_windows > 0:
-            all_logits_t = torch.cat(all_logits, dim=0)
-            all_labels_t = torch.cat(all_labels, dim=0)
-
-            _, rec_targets, rec_logits = aggregate_recordings(
-                all_logits_t, all_labels_t, all_rec_ids
-            )
-            rec_loss = self.criterion(
-                rec_logits.to(self.device), rec_targets.to(self.device)
-            )
-            avg_val_loss = rec_loss.item()
-            rec_preds = rec_logits.argmax(dim=1).cpu()
-            val_acc = (rec_preds == rec_targets).float().mean().item()
-            val_window_acc = correct_window / total_windows
+        all_logits_t = torch.cat(all_logits, dim=0)
+        all_labels_t = torch.cat(all_labels, dim=0)
+        _, rec_targets, rec_logits = aggregate_recordings(
+            all_logits_t, all_labels_t, all_rec_ids
+        )
+        rec_loss = self.criterion(
+            rec_logits.to(self.device), rec_targets.to(self.device)
+        )
+        rec_preds = rec_logits.argmax(dim=1).cpu()
+        val_acc = (rec_preds == rec_targets).float().mean().item()
+        val_window_acc = correct_window / total_windows
 
         return {
-            "val_loss": avg_val_loss,
+            "val_loss": rec_loss.item(),
             "val_acc": val_acc,
             "val_window_acc": val_window_acc,
         }
 
-    # ── post-train (test evaluation) ────────────────────────────────────
     def _post_train(self) -> Dict[str, Any]:
-        # Evaluation is deterministic (sliding windows, no augmentation)
-        # so restoring RNG from best checkpoint is not required.
-        # Loading weights only is sufficient.
         if self.test_loader is None or len(self.test_loader.dataset) == 0:
             print("WARNING: Test set is empty. Skipping final evaluation.")
             return {
@@ -409,20 +336,19 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
         if not best_ckpt_path.exists():
             print("WARNING: No best checkpoint found. Using current model weights.")
         else:
-            best_ckpt = torch.load(best_ckpt_path, weights_only=False)
+            best_ckpt = torch.load(
+                best_ckpt_path, map_location=self.device, weights_only=False
+            )
             _unwrap_compile(self.model).load_state_dict(best_ckpt["model_state_dict"])
 
         return self._evaluate(self.model, self.test_loader, self.class_names)
 
-    # ── evaluation ──────────────────────────────────────────────────────
     def _evaluate(
         self, model: nn.Module, test_loader: DataLoader, class_names: list
     ) -> Dict:
         model.eval()
         collector = MetricsCollector(self.run_dir, class_names)
-
         all_logits, all_labels, all_rec_ids = [], [], []
-
         with torch.no_grad():
             for mel_segments, labels, recording_ids in tqdm(
                 test_loader, desc="Evaluating", leave=False
@@ -430,22 +356,18 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
                 mel_segments = mel_segments.to(self.device)
                 with self.precision.autocast():
                     logits = model(mel_segments)
-
                 all_logits.append(logits.detach().cpu())
                 all_labels.append(labels.cpu())
                 all_rec_ids.extend(recording_ids)
 
         all_logits = torch.cat(all_logits, dim=0)
         all_labels = torch.cat(all_labels, dim=0)
-
         _, rec_targets, rec_logits = aggregate_recordings(
             all_logits, all_labels, all_rec_ids
         )
-
         probs = torch.softmax(rec_logits, dim=1).numpy()
         preds = rec_logits.argmax(dim=1).numpy()
         targets = rec_targets.numpy()
-
         collector.add_batch(preds, targets, probs)
         metrics = collector.compute_metrics()
         collector.save_metrics_json()
