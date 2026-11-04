@@ -387,27 +387,43 @@ class BaseTrainer(ABC):
     def _setup_scheduler(self):
         """Create LR scheduler from config."""
         epochs = self.config["training"]["epochs"]
-        scheduler_type = self.config["training"].get("scheduler_type", "cosine")
-        warmup_steps = self.config["training"].get("warmup_steps", 0)
-        steps_per_epoch = len(self.train_loader)
-
         if isinstance(epochs, bool) or not isinstance(epochs, int) or epochs <= 0:
             raise ValueError("training.epochs must be a positive integer")
 
+        steps_per_epoch = len(self.train_loader)
         if steps_per_epoch <= 0:
             raise ValueError("Training DataLoader must contain at least one batch")
+
+        total_steps = steps_per_epoch * epochs
+        if total_steps <= 0:
+            total_steps = 1
+
+        # Resolve warmup - training.warmup_steps wins, then scheduler.warmup_steps, then 0 (not 500)
+        warmup_steps = self.config["training"].get("warmup_steps")
+        if warmup_steps is None:
+            warmup_steps = self.config.get("scheduler", {}).get("warmup_steps", 0)
+        try:
+            warmup_steps = int(warmup_steps)
+        except (TypeError, ValueError):
+            warmup_steps = 0
 
         if warmup_steps < 0:
             raise ValueError("warmup_steps must be >= 0")
 
-        total_steps = steps_per_epoch * epochs
-
+        # auto-cap if warmup >= total
         if warmup_steps >= total_steps:
-            raise ValueError(
-                f"warmup_steps ({warmup_steps}) must be less than "
-                f"total_steps ({total_steps}); "
-                f"steps_per_epoch={steps_per_epoch}, epochs={epochs}"
+            old = warmup_steps
+            warmup_steps = max(1, total_steps // 10)
+            logger.warning(
+                f"warmup_steps ({old}) >= total_steps ({total_steps}). "
+                f"Capping warmup to {warmup_steps} for quick/small-data run."
             )
+            # write back so logs/callbacks see capped value
+            self.config["training"]["warmup_steps"] = warmup_steps
+            if "scheduler" in self.config:
+                self.config["scheduler"]["warmup_steps"] = warmup_steps
+
+        scheduler_type = self.config["training"].get("scheduler_type", "cosine")
 
         self.scheduler = create_scheduler(
             optimizer=self.optimizer,
