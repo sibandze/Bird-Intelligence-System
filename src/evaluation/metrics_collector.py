@@ -49,18 +49,32 @@ class MetricsCollector:
 
         # Per-class metrics
         precision, recall, f1, support = precision_recall_fscore_support(
-            all_labels, all_preds, average=None, zero_division=0
+            all_labels,
+            all_preds,
+            labels=list(range(len(self.class_names))),
+            average=None,
+            zero_division=0,
         )
         macro_f1 = precision_recall_fscore_support(
-            all_labels, all_preds, average="macro", zero_division=0
+            all_labels,
+            all_preds,
+            labels=list(range(len(self.class_names))),
+            average="macro",
+            zero_division=0,
         )[2]
         weighted_f1 = precision_recall_fscore_support(
-            all_labels, all_preds, average="weighted", zero_division=0
+            all_labels,
+            all_preds,
+            labels=list(range(len(self.class_names))),
+            average="weighted",
+            zero_division=0,
         )[2]
 
         # Confusion matrix
         cm = confusion_matrix(
-            all_labels, all_preds, labels=range(len(self.class_names))
+            all_labels,
+            all_preds,
+            labels=range(len(self.class_names)),
         )
 
         self.metrics = {
@@ -127,14 +141,18 @@ class MetricsCollector:
 
         cm = np.array(self.metrics["confusion_matrix"])
 
+        # 216 classes -> 46k cells, annotating every one is illegible and slow.
+        # Only annotate when the matrix is small enough to read.
+        annotate = cm.shape[0] <= 20
+
         plt.figure(figsize=figsize)
         sns.heatmap(
             cm,
-            annot=True,
-            fmt="d",
+            annot=annotate,
+            fmt="d" if annotate else "",
             cmap="Blues",
-            xticklabels=self.class_names,
-            yticklabels=self.class_names,
+            xticklabels=self.class_names if annotate else False,
+            yticklabels=self.class_names if annotate else False,
             cbar_kws={"label": "Count"},
         )
         plt.title("Confusion Matrix", fontsize=16, fontweight="bold")
