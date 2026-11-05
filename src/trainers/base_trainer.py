@@ -197,19 +197,24 @@ class BaseTrainer(ABC):
             self._print_epoch_summary(logs)
             self.cb_runner.on_epoch_end(self, epoch, logs)
 
-        # 8. Post-train (test evaluation), then on_train_end
+        # 8. Post-train (test evaluation), then on_train_end.
         #
-        # `_post_train` returns the final result dict. We stash it on the
-        # trainer and in trainer_state BEFORE dispatching on_train_end so
-        # that reporting / registry callbacks can read it. The actual
-        # MLops actions live in `on_train_end` (reporting) or in the
-        # external orchestrator (registry promotion, hparam advising) —
-        # never in the trainer itself.
-        results = self._post_train()
-        self.results = results
-        self.trainer_state["test_results"] = results
+        # on_train_end runs in `finally` so cleanup (wandb.finish,
+        # report writers, checkpoint flush) ALWAYS executes, even when
+        # _post_train() raises. Without this, a failing test evaluation
+        # leaves wandb's module-level run active, poisoning every
+        # subsequent experiment in the same process.
+        results = None
+        try:
+            results = self._post_train()
+            self.results = results
+            self.trainer_state["test_results"] = results
+        finally:
+            try:
+                self.cb_runner.on_train_end(self)
+            except Exception:
+                logger.exception("on_train_end callback failed")
 
-        self.cb_runner.on_train_end(self)
         return results
 
     # ==================================================================
