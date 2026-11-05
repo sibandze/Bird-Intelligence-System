@@ -24,7 +24,7 @@ class WandBLoggerCallback(Callback):
         self._max_failures = max_failures
         self._wandb_initialized = False
 
-    def _disable(self, reason: str):
+    def _disable(self, reason: str):                                                                                                                                                  
         if self.enabled:
             logger.warning(f"WandB logging disabled: {reason}")
             self.enabled = False
@@ -41,19 +41,38 @@ class WandBLoggerCallback(Callback):
     def on_train_begin(self, trainer):
         if not self.enabled:
             return
-        log_cfg = self.config.get("logging", {})
+        log_cfg = trainer.config.get("logging", {})
+
+        # Only resume wandb if we are resuming a checkpoint for THIS run_dir.
+        # New run_dir -> fresh run, even if id collides.
+        ckpt_exists = (Path(trainer.run_dir) / "checkpoint_last.pth").exists()
+        # Also check attempt - trainer sets this after _resume_checkpoint,
+        # but on_train_begin runs AFTER resume, so attempt > 0 means resumed
+        is_resume = ckpt_exists or trainer.trainer_state.get("attempt", 0) > 0
+
         try:
+            if wandb.run is not None:
+                # Orphaned run from previous experiment that crashed
+                # before on_train_end. Finish it, don't resume it.
+                # This is what caused step 0 < 305.
+                logger.warning("wandb.run already active, finishing orphaned run")
+                try:
+                    wandb.finish(exit_code=1)
+                except Exception:
+                    pass
+
             wandb.init(
                 project=log_cfg.get("wandb_project", "bird-song-classifier"),
-                name=log_cfg.get("wandb_run_name", self.run_dir.name),
-                config=self.config,
-                dir=str(self.run_dir),
-                resume="allow",
-                id=log_cfg.get("wandb_run_id", self.run_dir.name),
+                name=log_cfg.get("wandb_run_name", trainer.run_dir.name),
+                config=trainer.config,
+                dir=str(trainer.run_dir),
+                id=log_cfg.get("wandb_run_id", trainer.run_dir.name),
+                # KEY: allow only when resuming same run_dir
+                resume="allow" if is_resume else "never",
+                reinit=True,
             )
             wandb.watch(trainer.model, log="gradients", log_freq=100)
             self._wandb_initialized = True
-            self._failure_count = 0
         except Exception as e:
             self._handle_error("initialization", e)
             self._wandb_initialized = False
