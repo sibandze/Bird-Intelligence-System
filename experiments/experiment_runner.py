@@ -280,6 +280,7 @@ class ExperimentManager:
         if self.quick:
             config["training"]["epochs"] = 2
             config["training"]["patience"] = 5
+            config["training"]["warmup_steps"] = 2
 
         # Per-run seed for reproducible, distinct runs
         config["experiment"]["seed"] = run_seed
@@ -392,6 +393,18 @@ class ExperimentManager:
         except Exception as e:
             tb = traceback.format_exc()
             print(f"      ✗ Error during training: {str(e)}\n{tb}")
+
+            # Ensure W&B is finished even if trainer.train() crashed
+            # before on_train_end could fire. Otherwise the module-level
+            # run stays alive with its step counter, and the next
+            # experiment's wandb.init() / wandb.log(step=0) collides.
+            try:
+                import wandb as _wandb
+
+                if _wandb.run is not None:
+                    _wandb.finish(exit_code=1)
+            except Exception:
+                pass
 
             if mode == "ssl":
                 error_metrics = {
