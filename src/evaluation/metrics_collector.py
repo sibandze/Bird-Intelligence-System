@@ -10,8 +10,6 @@ from sklearn.metrics import (
     accuracy_score,
     precision_recall_fscore_support,
     confusion_matrix,
-    roc_auc_score,
-    roc_curve,
 )
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -43,6 +41,12 @@ class MetricsCollector:
         """Compute all metrics."""
         all_preds = np.array(self.all_preds)
         all_labels = np.array(self.all_labels)
+
+        if all_labels.size == 0:
+            raise ValueError(
+                "Cannot compute metrics: no evaluation samples. "
+                "Check that _evaluate() received a non-empty test loader."
+            )
 
         # Basic accuracy
         accuracy = accuracy_score(all_labels, all_preds)
@@ -109,16 +113,18 @@ class MetricsCollector:
         confusions = []
         for i in range(len(self.class_names)):
             for j in range(len(self.class_names)):
-                if i != j:
+                if i == j:
+                    continue
+                count = int(cm[i, j])
+                if count > 0:  # skip empty class-pair cells
                     confusions.append(
                         {
                             "true_class": self.class_names[i],
                             "pred_class": self.class_names[j],
-                            "count": int(cm[i, j]),
+                            "count": count,
                         }
                     )
 
-        # Sort by count
         confusions = sorted(confusions, key=lambda x: x["count"], reverse=True)[:top_n]
         self.metrics["top_confusions"] = confusions
 
