@@ -162,60 +162,55 @@ class BaseTrainer(ABC):
         # 6. Callbacks — train begin
         self.cb_runner.on_train_begin(self)
 
-        # 7. Epoch loop
-        epochs = self.config["training"]["epochs"]
-        self._last_train_metrics: Dict[str, float] = {}
-        self._last_val_metrics: Dict[str, float] = {}
-
-        for epoch in range(resume_epoch, epochs):
-            if self.stop_training:
-                break
-
-            if hasattr(self.train_loader.dataset, "set_epoch"):
-                self.train_loader.dataset.set_epoch(epoch)
-
-            self.cb_runner.on_epoch_begin(self, epoch)
-            epoch_start = time.time()
-
-            learning_rate_this_epoch = self.optimizer.param_groups[0]["lr"]
-            train_metrics = self._train_epoch(epoch)
-            val_metrics = self._validate_epoch(epoch)
-            self._update_best(val_metrics, epoch)
-            self._step_scheduler(val_metrics)
-
-            self._last_train_metrics = train_metrics
-            self._last_val_metrics = val_metrics
-
-            epoch_duration = time.time() - epoch_start
-            logs = self._build_logs(
-                epoch,
-                train_metrics,
-                val_metrics,
-                epoch_duration,
-                learning_rate_this_epoch,
-            )
-            self._print_epoch_summary(logs)
-            self.cb_runner.on_epoch_end(self, epoch, logs)
-
-        # 8. Post-train (test evaluation), then on_train_end.
-        #
-        # on_train_end runs in `finally` so cleanup (wandb.finish,
-        # report writers, checkpoint flush) ALWAYS executes, even when
-        # _post_train() raises. Without this, a failing test evaluation
-        # leaves wandb's module-level run active, poisoning every
-        # subsequent experiment in the same process.
-        results = None
+        # 7-8 wrap in try/finally so on_train_end ALWAYS fires
+        # (wandb.finish, checkpoint flush, report writers) even when
+        # _train_epoch, _validate_epoch, _update_best, _build_logs,
+        # on_epoch_end, or _post_train raises.
         try:
+            epochs = self.config["training"]["epochs"]
+            self._last_train_metrics: Dict[str, float] = {}
+            self._last_val_metrics: Dict[str, float] = {}
+
+            for epoch in range(resume_epoch, epochs):
+                if self.stop_training:
+                    break
+
+                if hasattr(self.train_loader.dataset, "set_epoch"):
+                    self.train_loader.dataset.set_epoch(epoch)
+
+                self.cb_runner.on_epoch_begin(self, epoch)
+                epoch_start = time.time()
+
+                learning_rate_this_epoch = self.optimizer.param_groups[0]["lr"]
+                train_metrics = self._train_epoch(epoch)
+                val_metrics = self._validate_epoch(epoch)
+                self._update_best(val_metrics, epoch)
+                self._step_scheduler(val_metrics)
+
+                self._last_train_metrics = train_metrics
+                self._last_val_metrics = val_metrics
+
+                epoch_duration = time.time() - epoch_start
+                logs = self._build_logs(
+                    epoch,
+                    train_metrics,
+                    val_metrics,
+                    epoch_duration,
+                    learning_rate_this_epoch,
+                )
+                self._print_epoch_summary(logs)
+                self.cb_runner.on_epoch_end(self, epoch, logs)
+
+            # 8. Post-train (test evaluation)
             results = self._post_train()
             self.results = results
             self.trainer_state["test_results"] = results
+            return results
         finally:
             try:
                 self.cb_runner.on_train_end(self)
             except Exception:
                 logger.exception("on_train_end callback failed")
-
-        return results
 
     # ==================================================================
     # Abstract — subclasses MUST implement
