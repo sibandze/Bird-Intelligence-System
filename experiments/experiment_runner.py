@@ -15,9 +15,8 @@ import warnings
 import numpy as np
 import pandas as pd
 import torch
-from typing import Dict, Any, List
+from typing import Dict, Any
 import csv
-from tqdm import tqdm
 
 # Add project root to path
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -51,6 +50,7 @@ class ExperimentManager:
         base_config_path: str,
         results_dir: str = "results",
         mode: str = "auto",
+        seed: int = 42,
         quick: bool = False,
     ):
         """
@@ -59,6 +59,7 @@ class ExperimentManager:
                   'auto' infers from suite name prefix.
             quick: If True, force 2 epochs + 5% stratified data sample
                    (smoke-test mode). Overrides any sweep `training.epochs`.
+            seed: Base seed. Per-run seeds are base_seed + run_index - 1.
         """
         self.base_config_path = Path(base_config_path)
         self.results_dir = Path(results_dir)
@@ -68,8 +69,12 @@ class ExperimentManager:
         if quick:
             print("⚡ QUICK MODE: forcing 2 epochs + 5% per-class data sample")
 
-        # Initialize seed attribute before set_seed() or load_data() are called
-        self.seed = 42
+        # base_seed is IMMUTABLE — never reassigned after __init__.
+        # self.seed tracks the currently-active seed (updated per run) so
+        # load_data() and other early methods have a sensible value.
+        self.base_seed = seed
+        self.seed = self.base_seed
+        self.set_seed(seed)
 
         # Load base config
         config_rel_path = (
@@ -87,7 +92,8 @@ class ExperimentManager:
         self.df = None
 
     def set_seed(self, seed: int = 42):
-        """Set random seeds for reproducibility."""
+        """Set RNG seeds for reproducibility. Updates self.seed (the
+        current run's seed) but never self.base_seed."""
         self.seed = seed
         random.seed(seed)
         np.random.seed(seed)
@@ -103,6 +109,12 @@ class ExperimentManager:
         """
         if self.df is not None:
             return self.df
+
+        # Reset global RNGs to base seed before any sampling. load_data()
+        # may be called after run_experiment() has already mutated self.seed
+        # to a per-run seed, so without this the distillation / quick-sample
+        # would depend on call order.
+        self.set_seed(self.base_seed)
 
         csv_path = resolve_metadata_csv_path(self.base_config)
         if not os.path.exists(csv_path):
@@ -124,11 +136,11 @@ class ExperimentManager:
                 f"across {n_classes} classes"
             )
             sampled_dfs = [
-                g.sample(n=max(1, int(len(g) * 0.05)), random_state=self.seed)
+                g.sample(n=max(1, int(len(g) * 0.05)), random_state=self.base_seed)
                 for _, g in full_df.groupby(label_col)
             ]
             self.df = pd.concat(sampled_dfs, ignore_index=True)
-            self.df = self.df.sample(frac=1, random_state=self.seed).reset_index(
+            self.df = self.df.sample(frac=1, random_state=self.base_seed).reset_index(
                 drop=True
             )
             print(f"✓ Quick dataset: {len(self.df)} samples")
@@ -154,7 +166,6 @@ class ExperimentManager:
 
             if len(eligible_classes) < requested_classes:
                 # Auto-reduce to the highest common number
-                # Find the maximum samples per class available for the top requested_classes
                 top_class_counts = class_counts.head(requested_classes)
                 max_possible = int(top_class_counts.min())
 
@@ -190,7 +201,7 @@ class ExperimentManager:
 
             # Sample per class
             sampled_dfs = []
-            rng = np.random.RandomState(self.seed)
+            rng = np.random.RandomState(self.base_seed)
             for cls in selected_classes:
                 cls_df = full_df[full_df[label_col] == cls]
                 sampled = cls_df.sample(n=requested_samples, random_state=rng)
@@ -216,6 +227,31 @@ class ExperimentManager:
             return "ssl" if is_ssl_suite(sweep_name) else "supervised"
         return self.mode
 
+    def _write_run_status(
+        self,
+        run_dir: Path,
+        status: str,
+        metrics: Dict = None,
+        error: str = None,
+        start_time: str = None,
+        seed: int = None,
+    ):
+        """Write per-run run_status.json - local source of truth for Colab
+        recovery. `seed` should be passed explicitly (run_seed) so the
+        artifact is correct regardless of call ordering; falls back to the
+        current self.seed when omitted."""
+        payload = {
+            "status": status,
+            "run_dir": str(run_dir),
+            "start_time": start_time,
+            "end_time": datetime.now().isoformat(),
+            "seed": seed if seed is not None else self.seed,
+            "error": error,
+            "metrics": metrics or {},
+        }
+        with open(Path(run_dir) / "run_status.json", "w") as f:
+            json.dump(payload, f, indent=2, default=str)
+
     def create_experiment_run(
         self,
         sweep_name: str,
@@ -225,15 +261,19 @@ class ExperimentManager:
     ) -> tuple:
         """Create a unique directory and config for this experiment run."""
         if not self.experiment_dir:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Microseconds + exist_ok=False: two managers started in the
+            # same second get distinct dirs. Refuses accidental reuse if
+            # the same experiment id already exists on disk.
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             self.experiment_name = f"exp_{timestamp}"
             self.experiment_dir = self.results_dir / self.experiment_name
-            self.experiment_dir.mkdir(exist_ok=True, parents=True)
+            self.experiment_dir.mkdir(parents=True, exist_ok=False)
             self.results_csv = self.experiment_dir / "results.csv"
 
         run_name = f"run_{run_index:04d}_{sweep_name}"
         run_dir = self.experiment_dir / run_name
-        run_dir.mkdir(exist_ok=True, parents=True)
+        # exist_ok=False: never resume a stale run silently.
+        run_dir.mkdir(parents=True, exist_ok=False)
 
         run_config = self._merge_config_with_hyperparams(
             hyperparams, run_dir, run_name, run_seed
@@ -276,7 +316,7 @@ class ExperimentManager:
         for dotted_path, param_value in hyperparams.items():
             set_nested_config(config, dotted_path, param_value)
 
-        # ── Quick mode is authoritative — must win over sweep values ────
+        # ── Quick mode is authoritative - must win over sweep values ────
         if self.quick:
             config["training"]["epochs"] = 2
             config["training"]["patience"] = 5
@@ -347,8 +387,9 @@ class ExperimentManager:
         dry_run: bool = False,
     ):
         """Run a single training experiment."""
-        # FIX: Per-run seed so each experiment has deterministic but distinct randomness
-        run_seed = self.seed + run_index
+        # First run uses the declared base seed; subsequent runs march
+        # forward deterministically (42, 43, 44, ...).
+        run_seed = self.base_seed + run_index - 1
         self.set_seed(run_seed)
 
         run_dir, run_config = self.create_experiment_run(
@@ -356,12 +397,16 @@ class ExperimentManager:
         )
 
         mode = self._resolve_mode(sweep_name)
+        start_time = datetime.now().isoformat()
 
         if dry_run:
             print(f"  [{run_index}] [DRY RUN] [{mode}] Would train with: {hyperparams}")
             print(f"      Seed: {run_seed}")
             print(f"      Epochs: {run_config['training']['epochs']}")
             print(f"      Config: {run_dir}/config.yaml")
+            self._write_run_status(
+                run_dir, "dry_run", start_time=start_time, seed=run_seed
+            )
             return None
 
         try:
@@ -374,9 +419,19 @@ class ExperimentManager:
             print(f"      Seed: {run_seed}")
             metrics = trainer.train(self.df)
 
+            # Explicit success marker so CSV ranking can distinguish
+            # completed runs from crashed ones. experiment.seed is
+            # recorded so the summary table can display the actual
+            # per-run seed (it lives in run_config but is not otherwise
+            # flattened into results.csv).
+            metrics = dict(metrics) if metrics else {}
+            metrics["status"] = "success"
+            metrics["experiment.seed"] = run_seed
             self.log_run_result(run_index, sweep_name, hyperparams, metrics)
+            self._write_run_status(
+                run_dir, "success", metrics, start_time=start_time, seed=run_seed
+            )
 
-            # Print mode-appropriate summary
             if mode == "ssl":
                 print(
                     f"      ✓ Val Loss: {metrics.get('val_loss', 0):.4f} | "
@@ -394,10 +449,8 @@ class ExperimentManager:
             tb = traceback.format_exc()
             print(f"      ✗ Error during training: {str(e)}\n{tb}")
 
-            # Ensure W&B is finished even if trainer.train() crashed
-            # before on_train_end could fire. Otherwise the module-level
-            # run stays alive with its step counter, and the next
-            # experiment's wandb.init() / wandb.log(step=0) collides.
+            # Belt-and-suspenders: finish orphaned W&B run if training
+            # crashed before on_train_end could fire.
             try:
                 import wandb as _wandb
 
@@ -406,23 +459,24 @@ class ExperimentManager:
             except Exception:
                 pass
 
-            if mode == "ssl":
-                error_metrics = {
-                    "val_loss": float("inf"),
-                    "val_contrastive_acc": 0.0,
-                    "error": str(e),
-                    "error_traceback": tb,
-                }
-            else:
-                error_metrics = {
-                    "accuracy": 0.0,
-                    "macro_f1": 0.0,
-                    "weighted_f1": 0.0,
-                    "error": str(e),
-                    "error_traceback": tb,
-                }
-
+            # NO zero-valued metrics - those pollute sweep ranking.
+            # The `status=failed` marker lets save_experiment_summary
+            # filter failed rows out of the leaderboard.
+            error_metrics = {
+                "status": "failed",
+                "error": str(e),
+                "error_traceback": tb,
+                "experiment.seed": run_seed,
+            }
             self.log_run_result(run_index, sweep_name, hyperparams, error_metrics)
+            self._write_run_status(
+                run_dir,
+                "failed",
+                error_metrics,
+                error=str(e),
+                start_time=start_time,
+                seed=run_seed,
+            )
             return None
 
     def save_experiment_summary(self, mode: str = "supervised"):
@@ -436,7 +490,7 @@ class ExperimentManager:
             f"**Mode:** {mode}{quick_note}\n"
             f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"**Total Runs:** {self.run_counter}\n"
-            f"**Base Seed:** {self.seed}\n"
+            f"**Base Seed:** {self.base_seed}\n"
             f"\n"
             f"## Results Location\n"
             f"- Detailed results: `{self.results_csv}`\n"
@@ -448,7 +502,14 @@ class ExperimentManager:
             try:
                 df_results = pd.read_csv(self.results_csv)
 
-                if mode == "ssl":
+                # Failed runs must not pollute the leaderboard. Older
+                # CSVs predating the status column are assumed successful.
+                if "status" in df_results.columns:
+                    df_results = df_results[df_results["status"] == "success"]
+
+                if len(df_results) == 0:
+                    summary += "### No successful runs to rank\n\n"
+                elif mode == "ssl":
                     sort_col = "val_loss"
                     ascending = True
                     summary += "### Top 5 Runs by Val Loss (lowest first)\n\n"
@@ -482,7 +543,6 @@ class ExperimentManager:
                             f"| {row.get('training.batch_size', 'N/A')} "
                             f"| {row.get('experiment.seed', 'N/A')} |\n"
                         )
-
             except Exception as e:
                 summary += f"(Error reading results: {e})\n"
 
@@ -584,11 +644,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Initialize experiment manager
+    # Initialize experiment manager. Base seed is set once here and stays
+    # immutable for the lifetime of the sweep.
     manager = ExperimentManager(
-        args.config, args.results_dir, mode=args.mode, quick=args.quick
+        args.config,
+        args.results_dir,
+        mode=args.mode,
+        quick=args.quick,
+        seed=args.seed,
     )
-    manager.set_seed(args.seed)
 
     # Get sweep suite
     sweep_suite = SWEEP_SUITES[args.suite]
