@@ -121,13 +121,17 @@ def _deterministic_view(report: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in report.items() if k not in ("analyzed_at", "llm")}
 
 
-def _cache_key(report: Dict[str, Any]) -> str:
+def _cache_key(report: Dict[str, Any], config: Dict[str, Any]) -> str:
+    # MUST include config: the prompt is report + config. Same report
+    # with a different config is a different prompt, and must not hit
+    # the same cache entry.
     return _hash(
         {
             "model": MODEL_NAME,
             "prompt_hash": _hash({"prompt": PROMPT_V1, "version": PROMPT_VERSION}),
             "schema_hash": _hash(_RESPONSE_SCHEMA),
             "report": _deterministic_view(report),
+            "config": _sanitize_config(config),
         }
     )
 
@@ -160,12 +164,21 @@ def _call_gemini(prompt: str) -> str:
         )
         return resp.text
 
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(_do)
-        try:
-            return future.result(timeout=CALL_TIMEOUT_SEC)
-        except FutTimeout:
-            raise RuntimeError(f"Gemini call exceeded {CALL_TIMEOUT_SEC}s")
+    # Do NOT use `with ThreadPoolExecutor(...)` here: on exit it does
+    # shutdown(wait=True), which blocks until Gemini finishes and
+    # defeats the timeout. Shut down with wait=False on timeout.
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(_do)
+    try:
+        return future.result(timeout=CALL_TIMEOUT_SEC)
+    except FutTimeout:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise RuntimeError(f"Gemini call exceeded {CALL_TIMEOUT_SEC}s")
+    finally:
+        # If we got a result, this returns immediately (worker is done).
+        # If we timed out, shutdown was already called above; calling
+        # it again with wait=False is a no-op.
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _empty_llm_block(error: Optional[str]) -> Dict[str, Any]:
@@ -198,7 +211,7 @@ def enrich_report(
 
         cache_dir = Path(cache_dir) if cache_dir else Path.home() / ".cache" / "bis"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / f"{_cache_key(report)}.json"
+        cache_file = cache_dir / f"{_cache_key(report, config)}.json"
 
         if cache_file.exists():
             report["llm"] = json.loads(cache_file.read_text())
