@@ -1,9 +1,13 @@
 # tools/mlops/model_registry.py
 import shutil
 import json
+import re
 import torch
 from pathlib import Path
 from datetime import datetime
+
+# Diagnoses that must never be promoted, even if a checkpoint exists.
+BLOCKED_DIAGNOSES = {"UNSTABLE_VAL", "OVERFIT", "TASK_TOO_EASY_SUSPECTED", "UNKNOWN"}
 
 
 class ModelRegistry:
@@ -16,6 +20,16 @@ class ModelRegistry:
         self.root = Path(registry_root)
         self.root.mkdir(parents=True, exist_ok=True)
 
+    def _next_version(self, model_name: str) -> int:
+        # max + 1, not len + 1: deleting v2 must not let the next
+        # promote reuse v2 and collide / overwrite.
+        versions = []
+        for p in self.root.glob(f"{model_name}-v*"):
+            m = re.match(rf"^{re.escape(model_name)}-v(\d+)$", p.name)
+            if m:
+                versions.append(int(m.group(1)))
+        return max(versions, default=0) + 1
+
     def promote(self, run_dir: Path, model_name: str = "bird-encoder"):
         run_dir = Path(run_dir)
         best_ckpt = run_dir / "checkpoint_best.pth"
@@ -26,12 +40,32 @@ class ModelRegistry:
             print(f"No {best_ckpt}")
             return None
 
-        # Find next version
-        existing = list(self.root.glob(f"{model_name}-v*"))
-        version = len(existing) + 1
+        # ── Promotion gate: report must exist, be ok, and not blocked ──
+        if not report_path.exists():
+            print(f"Refusing to promote {run_dir.name}: no report.json")
+            return None
+        try:
+            report = json.loads(report_path.read_text())
+        except Exception as e:
+            print(f"Refusing to promote {run_dir.name}: unreadable report.json: {e}")
+            return None
+        if report.get("status") != "ok":
+            print(
+                f"Refusing to promote {run_dir.name}: "
+                f"report status={report.get('status')!r}"
+            )
+            return None
+        diagnosis = report.get("diagnosis")
+        if diagnosis in BLOCKED_DIAGNOSES:
+            print(
+                f"Refusing to promote {run_dir.name}: "
+                f"diagnosis={diagnosis!r} is blocked"
+            )
+            return None
 
+        version = self._next_version(model_name)
         dest = self.root / f"{model_name}-v{version}"
-        dest.mkdir()
+        dest.mkdir(exist_ok=False)
 
         # Copy artifacts - this is the MLOps bundle
         shutil.copy(best_ckpt, dest / "model.pth")
@@ -40,13 +74,28 @@ class ModelRegistry:
         if report_path.exists():
             shutil.copy(report_path, dest / "report.json")
 
+        # ── Safe checkpoint read ──
+        # weights_only=True prevents arbitrary code execution from a
+        # checkpoint. Fall back to False only for trusted local files
+        # that fail the safe load (e.g. old checkpoints with custom objects).
+        try:
+            ckpt = torch.load(best_ckpt, map_location="cpu", weights_only=True)
+        except Exception:
+            print(
+                f"Warning: safe load failed for {best_ckpt}, retrying with weights_only=False (trusted local file only)"
+            )
+            ckpt = torch.load(best_ckpt, map_location="cpu", weights_only=False)
+        # Checkpoint may be a raw state_dict, not a dict with metadata.
+        if not isinstance(ckpt, dict):
+            ckpt = {}
+
         # Create model_card.json (governance)
-        ckpt = torch.load(best_ckpt, map_location="cpu", weights_only=False)
         card = {
             "model_name": model_name,
             "version": version,
             "created_at": datetime.now().isoformat(),
             "source_run": str(run_dir),
+            "source_diagnosis": diagnosis,
             "epoch": ckpt.get("epoch", -1),
             "trainer_state": ckpt.get("trainer_state", {}),
             "git_commit": ckpt.get("git_commit", None),
