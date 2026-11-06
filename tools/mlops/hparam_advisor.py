@@ -24,11 +24,10 @@ from __future__ import annotations
 import json
 import logging
 import statistics
+import yaml
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
-import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +38,8 @@ OVERFIT_COHORT_FRACTION = 0.40
 # Augmentation / capacity bounds so suggestions don't drift off-cliff
 AUG_PROB_MAX = 0.90
 NOISE_LEVEL_MAX = 0.30
-WEIGHT_DECAY_MAX_FACTOR = 4.0
-
+WEIGHT_DECAY_MAX = 0.10  # absolute cap: 0.01 -> 0.02 -> 0.04 -> 0.08 -> 0.10 (stops)
+LR_MIN = 1e-5  # floor: 1e-3 -> 5e-4 -> ... -> 1e-5 (stops)
 
 # ── helpers ────────────────────────────────────────────────────────────
 
@@ -121,9 +120,26 @@ class HyperparamAdvisor:
     # ── loading ────────────────────────────────────────────────────────
     def _load_reports(self) -> List[Dict[str, Any]]:
         reports: List[Dict[str, Any]] = []
+        seen: set = set()
         if not self.root.exists():
             return reports
-        for path in sorted(self.root.glob("*/report.json")):
+        for path in sorted(self.root.rglob("report.json")):
+            # Never count registry copies as sweep runs
+            try:
+                rel_parts = path.resolve().relative_to(self.root.resolve()).parts
+            except (ValueError, OSError):
+                rel_parts = path.parts
+
+                if "registry" in rel_parts:
+                    continue
+            # Dedup symlinked copies of the same file
+            try:
+                key = str(path.resolve())
+            except OSError:
+                key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
             try:
                 r = json.loads(path.read_text())
             except Exception as e:
@@ -134,7 +150,6 @@ class HyperparamAdvisor:
                 continue
             reports.append(r)
         return reports
-
     def _load_base(self, path: Path) -> Dict[str, Any]:
         if not path.exists():
             raise FileNotFoundError(f"Base config not found: {path}")
@@ -171,7 +186,7 @@ class HyperparamAdvisor:
                 {
                     "param": "training.learning_rate",
                     "from": current_lr,
-                    "to": current_lr * 0.5,
+                    "to": max(current_lr * 0.5, LR_MIN),
                     "source": "deterministic",
                     "rationale": (
                         f"{n_unstable}/{n} runs diagnosed UNSTABLE_VAL "
@@ -216,7 +231,7 @@ class HyperparamAdvisor:
                     {
                         "param": "training.weight_decay",
                         "from": current_wd,
-                        "to": current_wd * 2,
+                        "to": min(current_wd * 2, WEIGHT_DECAY_MAX),
                         "source": "deterministic",
                         "rationale": "Increase weight decay to reduce overfitting",
                         "n_supporting_runs": n_overfit,
