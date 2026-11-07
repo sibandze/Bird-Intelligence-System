@@ -300,13 +300,12 @@ class ExperimentManager:
         """
         config = yaml.safe_load(yaml.dump(self.base_config))  # Deep copy
 
-        # Ensure sections exist
         for section in (
             "training",
             "model",
             "augmentation",
             "logging",
-            "projection",
+            "ssl",
             "experiment",
         ):
             if section not in config:
@@ -320,7 +319,8 @@ class ExperimentManager:
         if self.quick:
             config["training"]["epochs"] = 2
             config["training"]["patience"] = 5
-            config["training"]["warmup_steps"] = 2
+            config["training"]["warmup_epochs"] = 0
+            config["training"].pop("warmup_steps", None)
 
         # Per-run seed for reproducible, distinct runs
         config["experiment"]["seed"] = run_seed
