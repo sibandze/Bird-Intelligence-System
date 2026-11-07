@@ -317,8 +317,8 @@ class ExperimentManager:
 
         # ── Quick mode is authoritative - must win over sweep values ────
         if self.quick:
-            config["training"]["epochs"] = 2
-            config["training"]["patience"] = 5
+            config["training"]["epochs"] = 5
+            config["training"]["patience"] = 2
             config["training"]["warmup_epochs"] = 0
             config["training"].pop("warmup_steps", None)
 
