@@ -57,8 +57,9 @@ class ExperimentManager:
         Args:
             mode: 'supervised', 'ssl', or 'auto'.
                   'auto' infers from suite name prefix.
-            quick: If True, force 2 epochs + 5% stratified data sample
-                   (smoke-test mode). Overrides any sweep `training.epochs`.
+            quick: If True, smoke-test mode. Overrides sweep hyperparams with:
+                   epochs=5, patience=2, warmup_epochs=0 (warmup_steps removed),
+                   and a 5%-per-class data sample capped at 10 samples/class.
             seed: Base seed. Per-run seeds are base_seed + run_index - 1.
         """
         self.base_config_path = Path(base_config_path)
@@ -67,7 +68,10 @@ class ExperimentManager:
         self.mode = mode
         self.quick = quick
         if quick:
-            print("⚡ QUICK MODE: forcing 2 epochs + 5% per-class data sample")
+            print(
+                "⚡ QUICK MODE: forcing 5 epochs, patience=2, warmup_epochs=0 "
+                "+ 5% per-class data sample (max 10/class)"
+            )
 
         # base_seed is IMMUTABLE — never reassigned after __init__.
         # self.seed tracks the currently-active seed (updated per run) so
@@ -104,8 +108,9 @@ class ExperimentManager:
     def load_data(self):
         """Load and distill dataset to num_classes and num_samples_per_class.
 
-        In quick mode, skip distillation and take 5% per class (min 1)
-        to exercise every code path on the full class set.
+        In quick mode, skip distillation and take 5% per class
+        (min 1, capped at 10) to exercise every code path on the full
+        class set.
         """
         if self.df is not None:
             return self.df
@@ -128,15 +133,18 @@ class ExperimentManager:
         data_cfg = self.base_config.get("data", {})
         label_col = data_cfg.get("label_column") or "scientific_name_id"
 
-        # ── Quick mode: 5% per class, min 1, no distillation ────────────
+        # ── Quick mode: 5% per class, min 1, max 10, no distillation ────
         if self.quick:
             n_classes = full_df[label_col].nunique()
             print(
-                f"⚡ Quick mode: sampling 5% per class (min 1) "
+                f"⚡ Quick mode: sampling 5% per class (min 1, max 10) "
                 f"across {n_classes} classes"
             )
             sampled_dfs = [
-                g.sample(n=max(1, int(len(g) * 0.05)), random_state=self.base_seed)
+                g.sample(
+                    n=min(10, max(1, int(len(g) * 0.05))),
+                    random_state=self.base_seed,
+                )
                 for _, g in full_df.groupby(label_col)
             ]
             self.df = pd.concat(sampled_dfs, ignore_index=True)
@@ -586,9 +594,10 @@ class ExperimentManager:
                 f"## ⚡ Quick Mode Notice\n"
                 f"\n"
                 f"This run was executed in **quick mode**:\n"
-                f"- Epochs forced to 2\n"
-                f"- Data reduced to 5% per class (min 1 sample)\n"
-                f"- Patience forced to 5\n"
+                f"- Epochs forced to 5\n"
+                f"- Patience forced to 2\n"
+                f"- Warmup epochs forced to 0 (warmup_steps removed)\n"
+                f"- Data reduced to 5% per class (min 1, max 10 samples)\n"
                 f"\n"
                 f"These results are for **smoke-testing** only — do not\n"
                 f"compare them against full-data baselines.\n"
@@ -636,7 +645,10 @@ def main():
     parser.add_argument(
         "--quick",
         action="store_true",
-        help="Smoke test: force 2 epochs + 5%% per-class data sample",
+        help=(
+            "Smoke test: force 5 epochs, patience 2, warmup 0, "
+            "and 5%% per-class data (max 10/class)"
+        ),
     )
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed for reproducibility"
@@ -665,7 +677,10 @@ def main():
     print(f"   Mode: {effective_mode}")
     print(f"   Base Seed: {args.seed}")
     if args.quick:
-        print(f"   ⚡ QUICK MODE: 2 epochs, 5% per-class data")
+        print(
+            "   ⚡ QUICK MODE: 5 epochs, patience 2, warmup 0, "
+            "5% per-class data (max 10/class)"
+        )
     print(f"{'='*80}\n")
 
     total_runs = sum(len(sweep.generate_configs()) for sweep in sweep_suite)
