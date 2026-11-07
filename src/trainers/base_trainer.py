@@ -123,6 +123,11 @@ class BaseTrainer(ABC):
         }
         self.stop_training = False
 
+        # Populated by _setup_scheduler(); declared here so external
+        # diagnostics can safely access them before scheduling is configured.
+        self._effective_warmup_steps: Optional[int] = None
+        self._warmup_source: str = "uninitialized"
+
         # ── callbacks ───────────────────────────────────────────────────
         if callbacks is None:
             callbacks = self._get_default_callbacks()
@@ -323,13 +328,13 @@ class BaseTrainer(ABC):
             f"Train Loss: {train_loss}",
         ]
         if train_acc is not None:
-            parts.append(f"Train Acc: {_fmt(train_acc)}")
+            parts.append(f"Train Acc (window): {_fmt(train_acc)}")
         if "val_loss" in logs:
             parts.append(f"Val Loss: {val_loss}")
         if val_acc is not None:
-            parts.append(f"Val Acc: {_fmt(val_acc)}")
+            parts.append(f"Val Acc (recording): {_fmt(val_acc)}")
         if val_win_acc is not None:
-            parts.append(f"Val Win Acc: {_fmt(val_win_acc)}")
+            parts.append(f"Val Win Acc (window): {_fmt(val_win_acc)}")
         if val_cont_acc is not None:
             parts.append(f"Val Cont Acc: {_fmt(val_cont_acc)}")
 
@@ -339,7 +344,6 @@ class BaseTrainer(ABC):
             for k in ("val_loss", "val_acc", "val_window_acc", "val_contrastive_acc")
         ):
             parts.append("Val: N/A")
-
         parts.append(f"Best: {best_str}")
         parts.append(f"LR: {_fmt(logs.get('learning_rate_this_epoch'), '.2e')}")
 
@@ -395,36 +399,34 @@ class BaseTrainer(ABC):
             raise ValueError("Training DataLoader must contain at least one batch")
 
         total_steps = steps_per_epoch * epochs
-        if total_steps <= 0:
-            total_steps = 1
 
-        # Resolve warmup - training.warmup_steps wins, then scheduler.warmup_steps, then 0 (not 500)
-        warmup_steps = self.config["training"].get("warmup_steps")
-        if warmup_steps is None:
-            warmup_steps = self.config.get("scheduler", {}).get("warmup_steps", 0)
-        try:
-            warmup_steps = int(warmup_steps)
-        except (TypeError, ValueError):
+        warmup_epochs = self.config["training"].get("warmup_epochs", 0)
+        if isinstance(warmup_epochs, bool) or not isinstance(warmup_epochs, (int, float)):
+            raise ValueError(
+                f"training.warmup_epochs must be a number, got {warmup_epochs!r}"
+            )
+        if warmup_epochs < 0:
+            raise ValueError("training.warmup_epochs must be >= 0")
+
+        warmup_steps = int(round(float(warmup_epochs) * steps_per_epoch))
+        warmup_source = f"warmup_epochs={warmup_epochs}"
+
+        if total_steps <= 1:
             warmup_steps = 0
-
-        if warmup_steps < 0:
-            raise ValueError("warmup_steps must be >= 0")
-
-        # auto-cap if warmup >= total
-        if warmup_steps >= total_steps:
+            warmup_source += " (disabled: total_steps<=1)"
+        elif warmup_steps >= total_steps:
             old = warmup_steps
             warmup_steps = max(1, total_steps // 10)
             logger.warning(
-                f"warmup_steps ({old}) >= total_steps ({total_steps}). "
-                f"Capping warmup to {warmup_steps} for quick/small-data run."
+                "warmup_steps (%d) >= total_steps (%d); capping warmup to %d.",
+                old, total_steps, warmup_steps,
             )
-            # write back so logs/callbacks see capped value
-            self.config["training"]["warmup_steps"] = warmup_steps
-            if "scheduler" in self.config:
-                self.config["scheduler"]["warmup_steps"] = warmup_steps
+            warmup_source += " (capped)"
+
+        self._effective_warmup_steps = warmup_steps
+        self._warmup_source = warmup_source
 
         scheduler_type = self.config["training"].get("scheduler_type", "cosine")
-
         self.scheduler = create_scheduler(
             optimizer=self.optimizer,
             scheduler_type=scheduler_type,
@@ -433,6 +435,12 @@ class BaseTrainer(ABC):
             min_lr=self.config["training"].get("min_lr", 1e-6),
         )
         self._scheduler_step_freq = get_scheduler_step_frequency(scheduler_type)
+
+        print(
+            f"    Scheduler: {scheduler_type} | "
+            f"Warmup: {warmup_steps} steps (from {warmup_source}) | "
+            f"Total: {total_steps} steps"
+        )
 
     def _resume_checkpoint(self) -> int:
         """Resume from ``checkpoint_last.pth`` if present. Returns the
