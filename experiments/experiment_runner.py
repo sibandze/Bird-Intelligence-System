@@ -133,16 +133,16 @@ class ExperimentManager:
         data_cfg = self.base_config.get("data", {})
         label_col = data_cfg.get("label_column") or "scientific_name_id"
 
-        # ── Quick mode: 5% per class, min 1, max 10, no distillation ────
+        # ── Quick mode: min 1, max 10, no distillation ────
         if self.quick:
             n_classes = full_df[label_col].nunique()
             print(
-                f"⚡ Quick mode: sampling 5% per class (min 1, max 10) "
+                f"⚡ Quick mode: sampling up to 10 per class "
                 f"across {n_classes} classes"
             )
             sampled_dfs = [
                 g.sample(
-                    n=min(10, max(1, int(len(g) * 0.05))),
+                    n=min(10, len(g)),
                     random_state=self.base_seed,
                 )
                 for _, g in full_df.groupby(label_col)
