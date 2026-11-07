@@ -246,6 +246,7 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
                 logits = self.model(mel_segments)
                 loss = self.criterion(logits, labels)
 
+            lr_used = self.optimizer.param_groups[0]["lr"]
             grad_norm = self._backward_and_step(loss)
             grad_sum += grad_norm
             n_batches += 1
@@ -262,7 +263,7 @@ class SupervisedTransformerExperimentTrainer(BaseTrainer):
                 {
                     "loss": loss.item(),
                     "grad_norm": grad_norm,
-                    "lr": self.optimizer.param_groups[0]["lr"],
+                    "lr": lr_used,
                 },
             )
 
