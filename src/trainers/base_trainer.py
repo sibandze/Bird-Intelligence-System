@@ -42,6 +42,7 @@ class BaseTrainer(ABC):
     _post_train             – post-training work (e.g. test evaluation) → result dict
     _print_train_init       – startup banner
     _print_epoch_summary    – one-line per-epoch log
+    get_wandb_metrics       – trainer-owned filter deciding what's a W&B metric
 
     Epoch-metadata contract (see callbacks.py)
     ------------------------------------------
@@ -55,9 +56,38 @@ class BaseTrainer(ABC):
     ``JSONLoggerCallback`` additionally persists ``global_epoch`` derived
     from its own on-disk history. Other callbacks must not treat these as
     numeric metrics (PlotMetricsCallback excludes them automatically).
+
+    W&B metrics ownership
+    ---------------------
+    ``wandb_exclude_keys`` lists ``logs`` keys that are metadata, not
+    metrics. Subclasses extend it (``BaseTrainer.wandb_exclude_keys |
+    {"my_key"}``) rather than overriding ``get_wandb_metrics``.
+    ``WandBLoggerCallback`` calls ``get_wandb_metrics`` and logs the
+    result — it does not decide what is a metric.
+
+    W&B observability contract
+    --------------------------
+    ``WandBLoggerCallback`` must never crash training. Any exception
+    raised from ``get_wandb_metrics`` (including ``ValueError`` for a
+    missing ``epoch``) is caught by the logger, counted toward the
+    three-strike disable, and dropped. W&B is observability; a bad
+    metric filter is a logging bug, not a training bug.
     """
 
     _weight_decay_default: float = 1e-4
+
+    # Keys in ``logs`` that are metadata, not metrics. They are dispatched
+    # to callbacks but must not be logged as numeric W&B metrics. Subclasses
+    # extend this set — they do not replace it, and they do not touch the
+    # logger. ``epoch`` is intentionally NOT in this set: it is both the
+    # step and a metric so the W&B table view matches the console.
+    wandb_exclude_keys: frozenset = frozenset({
+        "attempt",
+        "run_id",
+        "objective",
+        "global_epoch",
+        "train_total",  # raw sample count; not a signal, pollutes chart list
+    })
 
     def __init__(
         self,
@@ -314,29 +344,28 @@ class BaseTrainer(ABC):
             else "None (no best yet)"
         )
 
-        # Support both supervised and SSL metrics, handle missing
-        train_loss = _fmt(logs.get("train_loss"))
-        train_acc = logs.get("train_acc", logs.get("train_contrastive_acc"))
-        val_loss = _fmt(logs.get("val_loss"))
-        val_acc = logs.get("val_acc")
-        val_win_acc = logs.get("val_window_acc")
-        val_cont_acc = logs.get("val_contrastive_acc")
-
+        # Supervised and SSL report different accuracy concepts under
+        # different keys. Do not collapse them into one label — the
+        # distinction (window vs recording, contrastive vs supervised)
+        # is what W&B, JSON logs, and the plot callback all preserve.
         parts = [
             f"Epoch {logs['epoch']}/{self.config['training']['epochs']}",
             f"{logs['epoch_time_sec']:.1f}s",
-            f"Train Loss: {train_loss}",
+            f"Train Loss: {_fmt(logs.get('train_loss'))}",
         ]
-        if train_acc is not None:
-            parts.append(f"Train Acc (window): {_fmt(train_acc)}")
+        if "train_acc" in logs:
+            parts.append(f"Train Acc (window): {_fmt(logs['train_acc'])}")
+        elif "train_contrastive_acc" in logs:
+            parts.append(f"Train Cont Acc: {_fmt(logs['train_contrastive_acc'])}")
+
         if "val_loss" in logs:
-            parts.append(f"Val Loss: {val_loss}")
-        if val_acc is not None:
-            parts.append(f"Val Acc (recording): {_fmt(val_acc)}")
-        if val_win_acc is not None:
-            parts.append(f"Val Win Acc (window): {_fmt(val_win_acc)}")
-        if val_cont_acc is not None:
-            parts.append(f"Val Cont Acc: {_fmt(val_cont_acc)}")
+            parts.append(f"Val Loss: {_fmt(logs['val_loss'])}")
+        if "val_acc" in logs:
+            parts.append(f"Val Acc (recording): {_fmt(logs['val_acc'])}")
+        if "val_window_acc" in logs:
+            parts.append(f"Val Win Acc (window): {_fmt(logs['val_window_acc'])}")
+        if "val_contrastive_acc" in logs:
+            parts.append(f"Val Cont Acc: {_fmt(logs['val_contrastive_acc'])}")
 
         # If no val metrics at all
         if not any(
@@ -352,6 +381,39 @@ class BaseTrainer(ABC):
     # ==================================================================
     # Shared infrastructure
     # ==================================================================
+
+    def get_wandb_metrics(self, logs: Dict[str, Any]) -> Dict[str, Any]:
+        """Trainer-owned filter: which keys from ``logs`` are W&B metrics.
+
+        Filters out:
+
+        * metadata keys listed in ``wandb_exclude_keys`` (``attempt``,
+          ``run_id``, ``objective``, ``global_epoch``, ``train_total``)
+        * any key whose value is ``None`` (e.g. ``best_metric`` /
+          ``best_epoch`` on runs with no validation data, or
+          ``val_loss`` / ``val_acc`` on empty-val runs)
+
+        Raises ``ValueError`` if ``epoch`` is missing or ``None``.
+
+        The ``ValueError`` is *not* fatal to training: ``WandBLoggerCallback``
+        wraps this call in its own ``try``/``except``, counts the failure
+        toward the three-strike disable, and continues training. The
+        raise is fail-visible, not fail-crash — W&B stops logging, the
+        run does not die.
+
+        ``epoch`` is included naturally (not in ``wandb_exclude_keys``).
+        If a subclass mistakenly adds ``"epoch"`` to its exclude set, the
+        logger's ``metrics["epoch"]`` raises ``KeyError`` — also caught
+        inside the logger's ``try`` and counted as a W&B failure.
+        """
+        epoch = logs.get("epoch")
+        if epoch is None:
+            raise ValueError("logs must contain 1-indexed 'epoch' for W&B logging")
+        return {
+            k: v
+            for k, v in logs.items()
+            if k not in self.wandb_exclude_keys and v is not None
+        }
 
     def _set_seed(self):
         """Apply ``config['experiment']['seed']`` to all RNGs. Safe to
@@ -389,7 +451,17 @@ class BaseTrainer(ABC):
         )
 
     def _setup_scheduler(self):
-        """Create LR scheduler from config."""
+        """Create LR scheduler from config.
+
+        Required ``config['training']`` keys:
+            epochs          – positive int
+            warmup_epochs   – non-negative number (int or float, in epochs).
+                              Missing key raises ``KeyError``: a config
+                              carrying only the old ``warmup_steps`` key
+                              must fail loudly, not silently default to 0.
+            scheduler_type  – optional, default "cosine"
+            min_lr          – optional, default 1e-6
+        """
         epochs = self.config["training"]["epochs"]
         if isinstance(epochs, bool) or not isinstance(epochs, int) or epochs <= 0:
             raise ValueError("training.epochs must be a positive integer")
@@ -400,7 +472,10 @@ class BaseTrainer(ABC):
 
         total_steps = steps_per_epoch * epochs
 
-        warmup_epochs = self.config["training"].get("warmup_epochs", 0)
+        # Required key — no default. A config carrying only the old
+        # ``warmup_steps`` key (which we deleted) must fail loudly here,
+        # not silently run with warmup_epochs=0.
+        warmup_epochs = self.config["training"]["warmup_epochs"]
         if isinstance(warmup_epochs, bool) or not isinstance(warmup_epochs, (int, float)):
             raise ValueError(
                 f"training.warmup_epochs must be a number, got {warmup_epochs!r}"
