@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 
-from .base import Callback, _EPOCH_META_KEYS
+from .base import Callback
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +83,27 @@ class WandBLoggerCallback(Callback):
             self._wandb_run = None
             return
 
-        # watch() failures are non-fatal - keep the run alive for logging.
+        # Tell W&B to use the `epoch` field as the x-axis for every metric
+        # that carries it. This replaces what `log(step=epoch)` was trying
+        # to do, without fighting the run's internal _step counter (which
+        # watch() advances on its own schedule). Gradient histograms from
+        # watch() don't carry an `epoch` field, so they continue to key
+        # off _step — correct, because they are batch-level events.
         try:
-            self._wandb_run.watch(trainer.model, log="gradients", log_freq=100)
+            wandb.define_metric("epoch")
+            wandb.define_metric("*", step_metric="epoch")
+        except Exception as e:
+            self._handle_error("define_metric", e)
+
+        # watch() failures are non-fatal - keep the run alive for logging.
+        # log_freq is bumped to at least steps_per_epoch so gradient
+        # histogram events fire at most once per epoch; with smaller
+        # values, watch can burn many _step values inside a single epoch,
+        # polluting the _step axis for readers who chart batch-level
+        # histograms alongside epoch metrics.
+        try:
+            log_freq = max(100, len(trainer.train_loader))
+            self._wandb_run.watch(trainer.model, log="gradients", log_freq=log_freq)
         except Exception as e:
             self._handle_error("watch", e)
 
@@ -97,11 +115,45 @@ class WandBLoggerCallback(Callback):
             or self._wandb_run is None
         ):
             return
-        strip = _EPOCH_META_KEYS - {"global_epoch"}
-        metrics = {k: v for k, v in logs.items() if k not in strip}
+
+        # W&B is observability, not a hard dependency. Any exception here
+        # — a ValueError from the trainer's filter, a KeyError from a
+        # subclass that excluded "epoch" by mistake, a wandb SDK failure —
+        # must be caught, counted toward the three-strike disable, and
+        # dropped. It must never propagate into BaseTrainer.train() and
+        # kill a multi-hour run over a logging bug.
         try:
-            self._wandb_run.log(metrics, step=epoch)
+            if hasattr(trainer, "get_wandb_metrics"):
+                metrics = trainer.get_wandb_metrics(logs)
+            else:
+                # Fallback for trainers without the hook. Mirror the same
+                # non-None + exclude-keys filtering so a hand-built ``logs``
+                # dict can't sneak a None step into wandb.log().
+                metrics = {
+                    k: v
+                    for k, v in logs.items()
+                    if k not in {"attempt", "run_id", "objective", "global_epoch"}
+                    and v is not None
+                }
+                if "epoch" not in metrics:
+                    metrics["epoch"] = epoch + 1
+
+            if "epoch" not in metrics:
+                raise ValueError("Epoch missing from W&B metrics")
+
+            # No `step=` argument: W&B auto-increments its internal _step,
+            # so watch()'s gradient events and this epoch log can never
+            # collide on the same step number. Chart x-axis alignment with
+            # console "Epoch N/M" comes from define_metric("*",
+            # step_metric="epoch") in on_train_begin — not from asserting
+            # a step here.
+            self._wandb_run.log(metrics)
             self._failure_count = 0
+            logger.debug(
+                "W&B epoch log | epoch=%s | metrics=%s",
+                metrics["epoch"],
+                sorted(metrics.keys()),
+            )
         except Exception as e:
             self._handle_error("log", e)
 
