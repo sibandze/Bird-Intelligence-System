@@ -59,7 +59,7 @@ class ExperimentManager:
                   'auto' infers from suite name prefix.
             quick: If True, smoke-test mode. Overrides sweep hyperparams with:
                    epochs=5, patience=2, warmup_epochs=0 (warmup_steps removed),
-                   and a 5%-per-class data sample capped at 10 samples/class.
+                   and a at most 10 samples per class data capped.
             seed: Base seed. Per-run seeds are base_seed + run_index - 1.
         """
         self.base_config_path = Path(base_config_path)
@@ -70,7 +70,7 @@ class ExperimentManager:
         if quick:
             print(
                 "⚡ QUICK MODE: forcing 5 epochs, patience=2, warmup_epochs=0 "
-                "+ 5% per-class data sample (max 10/class)"
+                "+ max 10 samples per class"
             )
 
         # base_seed is IMMUTABLE — never reassigned after __init__.
