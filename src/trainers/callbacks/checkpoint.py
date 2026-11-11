@@ -104,7 +104,6 @@ class CheckpointCallback(Callback):
         weights = (
             self.state_dict_fn(model) if self.state_dict_fn else model.state_dict()
         )
-        # FIX: was _validate_state_dict_like -> self._validate_state_dict_like
         self._validate_state_dict_like(
             weights,
             context="state_dict_fn" if self.state_dict_fn else "model.state_dict()",
