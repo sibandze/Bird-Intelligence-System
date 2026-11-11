@@ -15,7 +15,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import torch
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import csv
 
 # Add project root to path
@@ -34,11 +34,9 @@ from src.trainers import SimCLRExperimentTrainer
 # Which suites are SSL vs supervised (by naming convention)
 SSL_SUITE_PREFIXES = ("ssl_",)
 
-
 def is_ssl_suite(sweep_name: str) -> bool:
     """Check if a sweep suite name indicates SSL training."""
     return any(sweep_name.startswith(prefix) for prefix in SSL_SUITE_PREFIXES)
-
 
 class ExperimentManager:
     """Manages experiment runs and result collection."""
@@ -56,7 +54,8 @@ class ExperimentManager:
         """
         Args:
             mode: 'supervised', 'ssl', or 'auto'.
-                  'auto' infers from suite name prefix.
+                  'auto' infers from suite name prefix, or defaults to
+                  'supervised' for a single run (no suite).
             quick: If True, smoke-test mode. Overrides sweep hyperparams with:
                    epochs=5, patience=2, warmup_epochs=0 (warmup_steps removed),
                    and a at most 10 samples per class data capped.
@@ -229,11 +228,23 @@ class ExperimentManager:
 
         return self.df
 
-    def _resolve_mode(self, sweep_name: str) -> str:
-        """Determine training mode for a given sweep."""
-        if self.mode == "auto":
+    def _resolve_mode(self, sweep_name: Optional[str] = None) -> str:
+        """Determine training mode for a given sweep.
+
+        Single source of truth for mode resolution. ``main()`` and
+        ``run_experiment()`` must both go through here — do not
+        re-implement the decision inline.
+
+        Args:
+            sweep_name: Suite/sweep name, or ``None`` for a single run
+                (no suite). ``None`` + ``mode="auto"`` defaults to
+                ``"supervised"`` — there is no suite name to infer from.
+        """
+        if self.mode != "auto":
+            return self.mode
+        if sweep_name is not None:
             return "ssl" if is_ssl_suite(sweep_name) else "supervised"
-        return self.mode
+        return "supervised"
 
     def _write_run_status(
         self,
@@ -393,8 +404,27 @@ class ExperimentManager:
         sweep_name: str,
         hyperparams: Dict,
         dry_run: bool = False,
-    ):
-        """Run a single training experiment."""
+        mode: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """Run a single training experiment.
+
+        Args:
+            run_index: 1-based run counter; determines the per-run seed
+                (``base_seed + run_index - 1``) and the run directory suffix.
+            sweep_name: Name used in the run directory and results CSV.
+            hyperparams: Dotted-path overrides applied to the base config.
+            dry_run: If True, skip training and only emit the resolved
+                config + run_status.json.
+            mode: Explicit trainer mode (``"supervised"`` or ``"ssl"``).
+                When provided, ``_resolve_mode(sweep_name)`` is bypassed.
+                This decouples trainer selection from the sweep name, which
+                matters for single runs whose names (e.g. ``"single_ssl"``)
+                do not match ``SSL_SUITE_PREFIXES`` (``"ssl_"``) and would
+                therefore be mis-resolved to supervised under auto mode.
+                When omitted (default), the mode is inferred from
+                ``sweep_name`` via ``_resolve_mode`` — this preserves the
+                existing sweep behavior.
+        """
         # First run uses the declared base seed; subsequent runs march
         # forward deterministically (42, 43, 44, ...).
         run_seed = self.base_seed + run_index - 1
@@ -404,7 +434,11 @@ class ExperimentManager:
             sweep_name, run_index, hyperparams, run_seed
         )
 
-        mode = self._resolve_mode(sweep_name)
+        # Explicit mode wins; otherwise fall back to name-based inference.
+        # Never read self.mode directly here — _resolve_mode is the single
+        # source of truth for auto-mode derivation.
+        if mode is None:
+            mode = self._resolve_mode(sweep_name)
         start_time = datetime.now().isoformat()
 
         if dry_run:
@@ -608,22 +642,27 @@ class ExperimentManager:
 
         print(f"\n✓ Experiment summary saved to {summary_path}")
 
-
 def main():
     parser = argparse.ArgumentParser(description="Run hyperparameter sweep experiments")
     parser.add_argument(
         "--suite",
         type=str,
-        default="quick_baseline",
+        default=None,
         choices=list(SWEEP_SUITES.keys()),
-        help="Which sweep suite to run",
+        help=(
+            "Which sweep suite to run. If omitted, runs a single experiment "
+            "using --mode and --config."
+        ),
     )
     parser.add_argument(
         "--mode",
         type=str,
         default="auto",
         choices=["supervised", "ssl", "auto"],
-        help="Training mode: supervised, ssl, or auto (inferred from suite name)",
+        help=(
+            "Training mode: supervised, ssl, or auto. When --suite is omitted "
+            "and mode is 'auto', defaults to 'supervised'."
+        ),
     )
     parser.add_argument(
         "--config",
@@ -666,7 +705,67 @@ def main():
         seed=args.seed,
     )
 
-    # Get sweep suite
+    # ── Single-run mode (no --suite provided) ────────────────────────────
+    if args.suite is None:
+        # Single source of truth: _resolve_mode(None), not a local if/else.
+        # None = no suite name to infer from, so auto -> supervised.
+        effective_mode = manager._resolve_mode(None)
+        if args.mode == "auto":
+            print(
+                "ℹ️  No --suite provided and --mode=auto → defaulting to "
+                "supervised. Pass --mode ssl for SSL training."
+            )
+
+        # The sweep_name below ("single_ssl" / "single_supervised") does
+        # NOT match SSL_SUITE_PREFIXES ("ssl_"), so _resolve_mode() on it
+        # would fall back to "supervised" under auto mode. We therefore
+        # pass mode=effective_mode explicitly to run_experiment() instead
+        # of relying on name-based inference, and we do NOT mutate
+        # manager.mode — the trainer choice is a per-call argument, not
+        # hidden state.
+        sweep_name = f"single_{effective_mode}"
+
+        print(f"\n{'='*80}")
+        print(f"🚀 Running Single Experiment")
+        print(f"   Mode: {effective_mode}")
+        print(f"   Config: {args.config}")
+        print(f"   Base Seed: {args.seed}")
+        if args.quick:
+            print(
+                "   ⚡ QUICK MODE: 5 epochs, patience 2, warmup 0, "
+                "5% per-class data (max 10/class)"
+            )
+        print(f"{'='*80}\n")
+
+        if not args.dry_run:
+            try:
+                manager.load_data()
+            except FileNotFoundError as e:
+                print(f"❌ Error: {e}")
+                sys.exit(1)
+
+        manager.run_experiment(
+            1,
+            sweep_name,
+            {},
+            dry_run=args.dry_run,
+            mode=effective_mode,
+        )
+        manager.save_experiment_summary(mode=effective_mode)
+
+        print(f"\n{'='*80}")
+        print(f"✅ Experiment complete!")
+        print(f"📁 Results saved to: {manager.experiment_dir}")
+        print(f"{'='*80}\n")
+
+        print("📖 Next Steps:")
+        print(f"   1. cd {manager.experiment_dir}")
+        print(f"   2. Review EXPERIMENT_SUMMARY.md for overview")
+        print(f"   3. Inspect run_0001_{sweep_name}/ for details")
+        print()
+        return
+
+    # ── Sweep-suite mode (existing behavior, unchanged) ──────────────────
     sweep_suite = SWEEP_SUITES[args.suite]
 
     # Resolve effective mode for display
@@ -711,7 +810,9 @@ def main():
         configs = sweep.generate_configs()
         print(f"   Configurations: {len(configs)}\n")
 
-        for config_idx, hyperparams in enumerate(configs, 1):
+        for hyperparams in configs:
+            # No mode= passed here: each sweep derives its own mode from
+            # sweep.name via _resolve_mode(), preserving existing behavior.
             manager.run_experiment(
                 run_index, sweep.name, hyperparams, dry_run=args.dry_run
             )
@@ -731,7 +832,6 @@ def main():
     print(f"   3. Review EXPERIMENT_SUMMARY.md for overview")
     print(f"   4. Inspect individual run_XXXX_*/ directories for details")
     print()
-
 
 if __name__ == "__main__":
     main()
