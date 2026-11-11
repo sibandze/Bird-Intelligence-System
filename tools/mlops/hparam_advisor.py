@@ -150,6 +150,7 @@ class HyperparamAdvisor:
                 continue
             reports.append(r)
         return reports
+
     def _load_base(self, path: Path) -> Dict[str, Any]:
         if not path.exists():
             raise FileNotFoundError(f"Base config not found: {path}")
