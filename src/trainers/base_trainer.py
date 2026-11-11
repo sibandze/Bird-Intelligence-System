@@ -81,13 +81,15 @@ class BaseTrainer(ABC):
     # extend this set — they do not replace it, and they do not touch the
     # logger. ``epoch`` is intentionally NOT in this set: it is both the
     # step and a metric so the W&B table view matches the console.
-    wandb_exclude_keys: frozenset = frozenset({
-        "attempt",
-        "run_id",
-        "objective",
-        "global_epoch",
-        "train_total",  # raw sample count; not a signal, pollutes chart list
-    })
+    wandb_exclude_keys: frozenset = frozenset(
+        {
+            "attempt",
+            "run_id",
+            "objective",
+            "global_epoch",
+            "train_total",  # raw sample count; not a signal, pollutes chart list
+        }
+    )
 
     def __init__(
         self,
@@ -476,7 +478,9 @@ class BaseTrainer(ABC):
         # ``warmup_steps`` key (which we deleted) must fail loudly here,
         # not silently run with warmup_epochs=0.
         warmup_epochs = self.config["training"]["warmup_epochs"]
-        if isinstance(warmup_epochs, bool) or not isinstance(warmup_epochs, (int, float)):
+        if isinstance(warmup_epochs, bool) or not isinstance(
+            warmup_epochs, (int, float)
+        ):
             raise ValueError(
                 f"training.warmup_epochs must be a number, got {warmup_epochs!r}"
             )
@@ -494,7 +498,9 @@ class BaseTrainer(ABC):
             warmup_steps = max(1, total_steps // 10)
             logger.warning(
                 "warmup_steps (%d) >= total_steps (%d); capping warmup to %d.",
-                old, total_steps, warmup_steps,
+                old,
+                total_steps,
+                warmup_steps,
             )
             warmup_source += " (capped)"
 
