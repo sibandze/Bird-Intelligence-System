@@ -18,16 +18,123 @@ def _unwrap_compile(model):
     return model
 
 
-def _atomic_torch_save(obj: Any, path: Path) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    torch.save(obj, tmp)
-    os.replace(tmp, path)
+def _cleanup_tmp(tmp: Path) -> None:
+    """Best-effort removal of a leftover .tmp file. Never raises."""
+    try:
+        tmp.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
+def _fsync_file(path: Path) -> None:
+    """Best-effort fsync. Durability hint only - never raises."""
+    try:
+        with open(path, "rb") as f:
+            os.fsync(f.fileno())
+    except Exception:
+        pass
+
+
+def _fsync_dir(path: Path) -> None:
+    """Best-effort fsync of the parent dir so the rename itself is durable."""
+    try:
+        fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+
+def _atomic_torch_save(obj: Any, path: Path) -> bool:
+    """Save with atomic rename, with fallbacks. Never raises.
+
+    1. Try: write to ``<path>.tmp`` in the same directory, fsync, ``os.replace``.
+       Same directory = same filesystem, so replace is atomic and cheap.
+    2. Fallback: direct ``torch.save(obj, path)``. Non-atomic - a crash
+       mid-write can leave a corrupt checkpoint - but a possibly-corrupt
+       checkpoint is better than killing the run, and the next epoch will
+       overwrite it anyway.
+    3. Last resort: log and return ``False``. The run continues; the
+       checkpoint for this epoch is simply missing.
+
+    Returns ``True`` if the file was written by either path.
+    Callers that need to know (e.g. checkpoint callback logging
+    "saved best") should check the return value. Callers that ignore it
+    get the old behaviour: no exception, run continues.
+    """
+    path = Path(path)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
+    try:
+        torch.save(obj, tmp)
+        _fsync_file(tmp)
+        os.replace(tmp, path)
+        _fsync_dir(path)
+        return True
+    except Exception as e:
+        logger.warning(
+            "Atomic torch save failed for %s (%s: %s). " "Falling back to direct save.",
+            path,
+            type(e).__name__,
+            e,
+        )
+        _cleanup_tmp(tmp)
+
+    # Fallback: direct write. Still guarded - disk-full / permission
+    # errors here must also not kill training.
+    try:
+        torch.save(obj, path)
+        _fsync_file(path)
+        return True
+    except Exception as e:
+        logger.warning(
+            "Direct torch save also failed for %s (%s: %s). "
+            "Continuing without saving this checkpoint.",
+            path,
+            type(e).__name__,
+            e,
+        )
+        return False
+
+
+def _atomic_write_text(path: Path, text: str) -> bool:
+    """Write text with atomic rename, with fallbacks. Never raises.
+
+    Same contract as ``_atomic_torch_save``: atomic first, direct write
+    second, log-and-continue third. Returns ``True`` on success.
+    """
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(text)
+        _fsync_file(tmp)
+        os.replace(tmp, path)
+        _fsync_dir(path)
+        return True
+    except Exception as e:
+        logger.warning(
+            "Atomic text write failed for %s (%s: %s). "
+            "Falling back to direct write.",
+            path,
+            type(e).__name__,
+            e,
+        )
+        _cleanup_tmp(tmp)
+
+    try:
+        path.write_text(text)
+        _fsync_file(path)
+        return True
+    except Exception as e:
+        logger.warning(
+            "Direct text write also failed for %s (%s: %s). "
+            "Continuing without writing this file.",
+            path,
+            type(e).__name__,
+            e,
+        )
+        return False
 
 
 class Callback:
