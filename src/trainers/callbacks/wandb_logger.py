@@ -184,7 +184,6 @@ class WandBLoggerCallback(Callback):
             ]:
                 path = self.run_dir / file
                 if path.exists():
-                    # FIXED: was watch() in buggy version, must be save()
                     self._wandb_run.save(str(path), base_path=str(self.run_dir))
         except Exception as e:
             self._handle_error("finalization (summary)", e)
