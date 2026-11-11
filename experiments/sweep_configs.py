@@ -290,18 +290,15 @@ SWEEP_SUITES = {
     # -----------------------------------------------------------------
     # Supervised
     # -----------------------------------------------------------------
-
     "quick_baseline": [
         BASELINE_LEARNING_RATE_SWEEP,
     ],
-
     "standard_baseline": [
         BASELINE_LEARNING_RATE_SWEEP,
         BASELINE_BATCH_SIZE_SWEEP,
         BASELINE_DROPOUT_SWEEP,
         BASELINE_AUGMENTATION_PROB_SWEEP,
     ],
-
     "comprehensive": [
         BASELINE_LEARNING_RATE_SWEEP,
         BASELINE_BATCH_SIZE_SWEEP,
@@ -311,38 +308,31 @@ SWEEP_SUITES = {
         BASELINE_FREQ_MASK_SWEEP,
         BASELINE_TIME_MASK_SWEEP,
     ],
-
     "optimization_focus": [
         FOCUSED_LR_WEIGHT_DECAY_SWEEP,
         SCHEDULER_TYPE_SWEEP,
         WARMUP_EPOCHS_SWEEP,
         MIXED_PRECISION_SWEEP,
     ],
-
     "scheduler_ablation": [
         SCHEDULER_FINETUNE_SWEEP,
         SCHEDULER_TYPE_SWEEP,
         WARMUP_EPOCHS_SWEEP,
     ],
-
     # -----------------------------------------------------------------
     # SSL
     # -----------------------------------------------------------------
-
     "ssl_sanity": [
         SSL_QUICK_SANITY,
     ],
-
     "ssl_lr": [
         SSL_LEARNING_RATE_SWEEP,
     ],
-
     "ssl_standard": [
         SSL_LEARNING_RATE_SWEEP,
         SSL_TEMPERATURE_SWEEP,
         SSL_WEIGHT_DECAY_SWEEP,
     ],
-
     "ssl_comprehensive": [
         SSL_LEARNING_RATE_SWEEP,
         SSL_TEMPERATURE_SWEEP,
